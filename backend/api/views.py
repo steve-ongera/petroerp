@@ -98,7 +98,7 @@ class BaseViewSet(PermMixin, viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, ModulePermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     ordering_fields = '__all__'
-    ordering = ['-id']
+    ordering = ['-pk']
     model = None
     scope = 'company'              # path to the legal entity; None = global master data
     date_field = None
@@ -309,7 +309,7 @@ class RoleViewSet(PermMixin, viewsets.ReadOnlyModelViewSet):
     module = 'admin'
     permission_classes = [IsAuthenticated, ModulePermission]
     serializer_class = sz.RoleSerializer
-    queryset = m.Role.objects.prefetch_related('permissions')
+    queryset = m.Role.objects.prefetch_related('permissions').order_by('code')
 
 
 @route('companies')
@@ -331,14 +331,6 @@ reg('approval-policies', m.ApprovalPolicy, 'company')
 reg('account-mappings', m.AccountMapping, 'finance')
 reg('border-crossings', m.BorderCrossing, 'customs', scope=None)
 reg('compliance-requirements', m.ComplianceRequirement, 'customs', scope=None)
-
-
-@route('tax-configs-verify')
-class _Dummy:       # placeholder removed below
-    pass
-
-
-ROUTES.pop()
 
 
 class TaxVerify(APIView):
@@ -654,7 +646,7 @@ class PricingView(APIView):
 # ====================================================================== fleet & transport
 @route('vehicles')
 class VehicleViewSet(make_viewset(m.Vehicle, 'fleet', search=('make', 'model'), filters_=('ownership',))):
-    @action(detail=True, methods=['post'], url_path='log-expense', perm_map=None)
+    @action(detail=True, methods=['post'], url_path='log-expense')
     def log_expense(self, request, pk=None):
         v = self.get_object()
         d = sz.VehicleExpenseIn(data=request.data)
@@ -750,6 +742,21 @@ class ShipmentViewSet(make_viewset(m.Shipment, 'shipments', filters_=('customer'
                                            comments=v.get('comments', ''), confirmation_type=v['confirmation_type'],
                                            confirmed_by=v.get('confirmed_by', ''), attachment=v.get('attachment'))
         return Response({'status': sh.status, 'history_id': h.id})
+
+    @action(detail=True, methods=['post'], url_path='record-loading')
+    def record_loading(self, request, pk=None):
+        d = sz.LoadingIn(data=request.data)
+        d.is_valid(raise_exception=True)
+        v = d.validated_data
+        sh = svc.record_loading(self.get_object(), [dict(l) for l in v['lines']], request.user, v.get('loading_date'))
+        return Response({'loading_quantity': sh.loading_quantity})
+
+    @action(detail=True, methods=['post'], url_path='trip-data')
+    def trip_data(self, request, pk=None):
+        d = sz.TripDataIn(data=request.data)
+        d.is_valid(raise_exception=True)
+        svc.update_trip_data(self.get_object(), request.user, **d.validated_data)
+        return Response({'ok': True})
 
     @action(detail=True, methods=['post'], url_path='record-delivery')
     def record_delivery(self, request, pk=None):
