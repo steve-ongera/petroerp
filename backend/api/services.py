@@ -1515,6 +1515,46 @@ def update_shipment_status(sh, new_status, user, *, when=None, location='', comm
 
 
 @transaction.atomic
+def record_loading(sh, lines, user, loading_date=None):
+    """Record actual loaded litres per line while the shipment is LOADING (header is locked after DRAFT)."""
+    sh = Shipment.objects.select_for_update().get(pk=sh.pk)
+    if sh.status != 'LOADING':
+        err('Loaded quantities can only be recorded while the shipment status is LOADING.')
+    for l in lines:
+        ln = sh.lines.filter(pk=l['id']).first()
+        if not ln:
+            err(f'Shipment line {l["id"]} not found.')
+        ln.loaded_quantity = q3(l['loaded_quantity'])
+        if l.get('tank'):
+            ln.tank = l['tank']
+            if ln.tank.company_id != sh.company_id:
+                err('Tank belongs to another legal entity.')
+        ln.compartment = l.get('compartment', ln.compartment)
+        ln.save()
+    total = sum((x.loaded_quantity for x in sh.lines.all()), D0)
+    cap = (sh.vehicle.tank_capacity if sh.vehicle_id else sh.hired_truck.capacity if sh.hired_truck_id else D0)
+    if cap and total > cap:
+        err(f'Loaded {total} L exceeds the truck capacity of {cap} L.')
+    sh.loading_quantity = total
+    if loading_date:
+        sh.loading_date = as_date(loading_date)
+    sh.save()
+    audit(user, 'RECORD_LOADING', sh, {'loaded': total})
+    return sh
+
+
+def update_trip_data(sh, user, **data):
+    if sh.status in ('CLOSED', 'CANCELLED'):
+        err('Shipment is closed.')
+    for k in ('distance_km', 'fuel_issued_litres', 'fuel_used_litres', 'expected_delivery'):
+        if data.get(k) is not None:
+            setattr(sh, k, data[k])
+    sh.save()
+    audit(user, 'TRIP_DATA', sh, {k: v for k, v in data.items() if v is not None})
+    return sh
+
+
+@transaction.atomic
 def record_delivery(sh, user, *, delivered_quantity, delivery_date=None, is_final=False, received_by='', notes='',
                     temperature_c=None, density=None, pod_file=None):
     sh = Shipment.objects.select_for_update().get(pk=sh.pk)
@@ -1679,11 +1719,964 @@ def compute_cost_sheet(sh, user, *, finalize=False, reopen=False, notes=''):
 
 
 # =========================================================== hooks (called after an approval is granted)
-def _approve_booking(b, user):
-    pass
+def _approve_payment(p, user):
+    p.approved_by, p.approved_at = user, timezone.now()
+    p.save(update_fields=['approved_by', 'approved_at'])
 
 
 APPROVAL_HOOKS = {
+    'Payment': _approve_payment,
     'StockAdjustment': _approve_stock_adjustment,
     'ShipmentDelivery': _post_delivery,
 }
+
+
+# =========================================================== fixed assets
+@transaction.atomic
+def run_depreciation(company, period_end, user):
+    """Straight-line monthly depreciation, once per asset per period (unique constraint)."""
+    period_end, out = as_date(period_end), []
+    for a in FixedAsset.objects.filter(company=company, status='ACTIVE', acquisition_date__lte=period_end):
+        if AssetDepreciation.objects.filter(asset=a, period_end=period_end).exists():
+            continue
+        depreciable = a.cost - a.salvage_value - a.accumulated_depreciation
+        if depreciable <= 0 or not a.useful_life_months:
+            continue
+        amt = min(q2((a.cost - a.salvage_value) / a.useful_life_months), depreciable)
+        j = post_journal(company, period_end, f'Depreciation {a.reference} {period_end:%b %Y}',
+                         [{'account': acct(company, 'DEPRECIATION_EXP'), 'debit': amt},
+                          {'account': acct(company, 'ACCUM_DEPRECIATION'), 'credit': amt}], source=a, user=user)
+        AssetDepreciation.objects.create(company=company, asset=a, period_end=period_end, amount=amt, journal=j, created_by=user)
+        a.accumulated_depreciation += amt
+        a.save(update_fields=['accumulated_depreciation'])
+        out.append(a)
+    return out
+
+
+@transaction.atomic
+def dispose_asset(asset, proceeds, on_date, bank_account, user):
+    if asset.status != 'ACTIVE':
+        err('Asset already disposed.')
+    co, proceeds = asset.company, q2(proceeds)
+    gl = proceeds - asset.net_book_value
+    lines = [{'account': bank_account.gl_account, 'debit': proceeds},
+             {'account': acct(co, 'ACCUM_DEPRECIATION'), 'debit': asset.accumulated_depreciation},
+             {'account': acct(co, 'FIXED_ASSETS'), 'credit': asset.cost},
+             {'account': acct(co, 'DISPOSAL_GAIN_LOSS'), 'debit': -gl if gl < 0 else 0, 'credit': gl if gl > 0 else 0}]
+    post_journal(co, on_date, f'Disposal {asset.reference}', lines, source=asset, user=user)
+    asset.status, asset.disposal_date, asset.disposal_proceeds, asset.disposal_gain_loss = 'DISPOSED', as_date(on_date), proceeds, gl
+    asset.save()
+    return asset
+
+
+# =========================================================== payroll (config-driven, per entity/country)
+def _bracket_tax(amount, brackets):
+    tax, prev = D0, D0
+    for b in sorted(brackets, key=lambda x: (x.get('up_to') is None, x.get('up_to') or 0)):
+        top = dec(b['up_to']) if b.get('up_to') is not None else None
+        slab = (min(amount, top) if top is not None else amount) - prev
+        if slab > 0:
+            tax += slab * dec(b['rate']) / 100
+        if top is None or amount <= top:
+            break
+        prev = top
+    return tax
+
+
+@transaction.atomic
+def run_payroll(run, user, overtime=None):
+    if run.status != 'DRAFT':
+        err('Payroll run already posted.')
+    co, overtime = run.company, overtime or {}
+    cfg = list(PayrollConfig.objects.filter(company=co, is_active=True, effective_from__lte=run.period_end)
+               .filter(Q(effective_to__isnull=True) | Q(effective_to__gte=run.period_end)))
+    emps = Employee.objects.filter(company=co, status='ACTIVE')
+    if not emps:
+        err('No active employees.')
+    tg = td = tn = te = D0
+    liab = {}
+    run.payslips.all().delete()
+    for e in emps:
+        allow = sum((dec(a.get('amount')) for a in e.allowances), D0)
+        ot = dec(overtime.get(str(e.id), 0))
+        gross = e.basic_salary + allow + ot
+        ded, emp = {}, {}
+        for c in cfg:
+            base = gross if c.base == 'GROSS' else e.basic_salary
+            v = (base * c.value / 100 if c.calc_type == 'PERCENT' else c.value if c.calc_type == 'FIXED' else _bracket_tax(base, c.brackets))
+            v = q2(min(v, c.cap) if c.cap else v)
+            (ded if c.kind == 'DEDUCTION' else emp)[c.code] = str(v)
+            if c.liability_account_id:
+                liab[c.liability_account_id] = liab.get(c.liability_account_id, D0) + v
+        tded, temp = sum((dec(x) for x in ded.values()), D0), sum((dec(x) for x in emp.values()), D0)
+        Payslip.objects.create(run=run, employee=e, basic=e.basic_salary, allowances=allow, overtime=ot, gross=gross,
+                               deductions=ded, total_deductions=tded, employer_contributions=emp, total_employer=temp,
+                               net_pay=gross - tded)
+        tg, td, tn, te = tg + gross, td + tded, tn + gross - tded, te + temp
+    stat_ded = sum((dec(v) for s in run.payslips.all() for v in s.deductions.values()), D0)
+    lines = [{'account': acct(co, 'SALARIES_EXP'), 'debit': tg + te},
+             {'account': acct(co, 'PAYROLL_PAYABLE'), 'credit': tn}]
+    stat_total = stat_ded + te
+    for acc_id, v in liab.items():
+        lines.append({'account': Account.objects.get(pk=acc_id), 'credit': v})
+    unmapped = stat_total - sum(liab.values(), D0)
+    if unmapped:
+        lines.append({'account': acct(co, 'STATUTORY_PAYABLE'), 'credit': unmapped})
+    run.journal = post_journal(co, run.period_end, f'Payroll {run.reference}', lines, source=run, user=user)
+    run.total_gross, run.total_deductions, run.total_net, run.total_employer_cost, run.status = tg, td, tn, te, 'POSTED'
+    run.save()
+    return run
+
+
+# =========================================================== FX revaluation (unrealized)
+@transaction.atomic
+def revalue_foreign_balances(company, as_of, user, post=False):
+    """Unrealized FX on open foreign-currency AR/AP at the closing rate. Posts one journal (reverse next period)."""
+    as_of, fc = as_date(as_of), company.functional_currency_id
+    rows, ar_adj, ap_adj = [], D0, D0
+    for i in SalesInvoice.objects.filter(company=company, status__in=('POSTED', 'PART_PAID')).exclude(currency_id=fc):
+        rate = get_rate(i.currency_id, fc, as_of)[0]
+        d = q2(i.outstanding * (rate - i.exchange_rate))
+        ar_adj += d
+        rows.append(['AR', i.reference, i.currency_id, i.outstanding, i.exchange_rate, rate, d])
+    for model, kind in ((PurchaseInvoice, 'AP'), (TransporterInvoice, 'AP')):
+        for i in model.objects.filter(company=company, status__in=('POSTED', 'PART_PAID')).exclude(currency_id=fc):
+            rate = get_rate(i.currency_id, fc, as_of)[0]
+            d = q2(i.outstanding * (rate - i.exchange_rate))
+            ap_adj += d
+            rows.append([kind, i.reference, i.currency_id, i.outstanding, i.exchange_rate, rate, -d])
+    net = ar_adj - ap_adj
+    j = None
+    if post and (ar_adj or ap_adj):
+        lines = [{'account': acct(company, 'AR'), 'debit': ar_adj if ar_adj > 0 else 0, 'credit': -ar_adj if ar_adj < 0 else 0},
+                 {'account': acct(company, 'AP'), 'credit': ap_adj if ap_adj > 0 else 0, 'debit': -ap_adj if ap_adj < 0 else 0},
+                 {'account': acct(company, 'FX_UNREALIZED'), 'credit': net if net > 0 else 0, 'debit': -net if net < 0 else 0}]
+        j = post_journal(company, as_of, f'Unrealized FX revaluation {as_of}', lines, user=user)
+    return {'as_of': as_of, 'gain_loss': net, 'journal': j.reference if j else None,
+            'columns': ['Type', 'Document', 'Currency', 'Outstanding', 'Booked rate', 'Closing rate', 'Gain/(loss)'], 'rows': rows}
+
+
+# =========================================================== intercompany & consolidation
+def _fx_line(co, diff, gain_when_positive=True):
+    if not diff:
+        return None
+    gain = (diff > 0) == gain_when_positive
+    return {'account': acct(co, 'FX_GAIN' if gain else 'FX_LOSS'), 'credit' if gain else 'debit': abs(diff)}
+
+
+@transaction.atomic
+def create_intercompany_sale(seller, buyer, product, quantity, transfer_price, currency, on_date, user, *,
+                             from_tank=None, to_tank=None, shipment=None, notes=''):
+    """Dual-entity posting: seller (IC receivable/revenue) and buyer (inventory or IC purchases / IC payable)."""
+    if seller.id == buyer.id:
+        err('Seller and buyer must be different legal entities.')
+    allowed = set(user.allowed_company_ids())
+    if seller.id not in allowed or buyer.id not in allowed:
+        err('You need access to both legal entities.')
+    qty, price = q3(quantity), q6(transfer_price)
+    amount = q2(qty * price)
+    sr, br = get_rate(currency, seller.functional_currency_id, on_date)[0], get_rate(currency, buyer.functional_currency_id, on_date)[0]
+    s_amt, b_amt = q2(amount * sr), q2(amount * br)
+    ref = next_reference(seller, 'IC', on_date)
+    s_lines = [{'account': acct(seller, 'IC_RECEIVABLE'), 'debit': s_amt}, {'account': acct(seller, 'IC_REVENUE'), 'credit': s_amt}]
+    if from_tank:
+        mv = move_stock(company=seller, tank=from_tank, product=product, movement_type='ISSUE', quantity=qty, on_date=on_date,
+                        user=user, narration=f'IC sale {ref}')
+        s_lines += [{'account': acct(seller, 'COGS'), 'debit': mv.total_cost}, {'account': acct(seller, 'INVENTORY'), 'credit': mv.total_cost}]
+    b_lines = [{'account': acct(buyer, 'IC_PAYABLE'), 'credit': b_amt}]
+    if to_tank:
+        move_stock(company=buyer, tank=to_tank, product=product, movement_type='RECEIPT', quantity=qty, on_date=on_date,
+                   unit_cost=q6(b_amt / qty), user=user, narration=f'IC purchase {ref}')
+        b_lines.append({'account': acct(buyer, 'INVENTORY'), 'debit': b_amt})
+    else:
+        b_lines.append({'account': acct(buyer, 'IC_PURCHASES'), 'debit': b_amt})
+    sj = post_journal(seller, on_date, f'IC sale {ref} to {buyer.code}', s_lines, user=user)
+    bj = post_journal(buyer, on_date, f'IC purchase {ref} from {seller.code}', b_lines, user=user)
+    t = IntercompanyTransaction.objects.create(
+        reference=ref, txn_type='SALE', from_company=seller, to_company=buyer, txn_date=as_date(on_date), product=product,
+        quantity=qty, transfer_price=price, currency_id=currency, amount=amount, seller_rate=sr, buyer_rate=br,
+        from_journal=sj, to_journal=bj, shipment=shipment, notes=notes, status='POSTED', created_by=user)
+    if shipment:
+        Shipment.objects.filter(pk=shipment.pk).update(intercompany_transaction=t)
+    audit(user, 'INTERCOMPANY_SALE', t, {'amount': amount, 'from': seller.code, 'to': buyer.code}, company=seller.id)
+    return t
+
+
+@transaction.atomic
+def settle_intercompany(txn, amount, on_date, seller_bank, buyer_bank, user):
+    amount = q2(amount)
+    if amount <= 0 or amount > txn.outstanding:
+        err(f'Settlement must be between 0 and the outstanding {txn.outstanding}.')
+    s, b = txn.from_company, txn.to_company
+    sr, br = get_rate(txn.currency_id, s.functional_currency_id, on_date)[0], get_rate(txn.currency_id, b.functional_currency_id, on_date)[0]
+    s_cash, s_carry = q2(amount * sr), q2(amount * txn.seller_rate)
+    b_cash, b_carry = q2(amount * br), q2(amount * txn.buyer_rate)
+    sl = [{'account': seller_bank.gl_account, 'debit': s_cash}, {'account': acct(s, 'IC_RECEIVABLE'), 'credit': s_carry}]
+    if (x := _fx_line(s, s_cash - s_carry, True)):
+        sl.append(x)
+    bl = [{'account': acct(b, 'IC_PAYABLE'), 'debit': b_carry}, {'account': buyer_bank.gl_account, 'credit': b_cash}]
+    if (x := _fx_line(b, b_cash - b_carry, False)):
+        bl.append(x)
+    post_journal(s, on_date, f'IC settlement {txn.reference}', sl, user=user)
+    post_journal(b, on_date, f'IC settlement {txn.reference}', bl, user=user)
+    txn.settled_amount += amount
+    txn.status = 'SETTLED' if txn.outstanding <= 0 else 'PART_SETTLED'
+    txn.save()
+    return txn
+
+
+def _gl_net(company, subtype, on_date):
+    s = JournalLine.objects.filter(journal__company=company, account__subtype=subtype, journal__date__lte=as_date(on_date)) \
+        .aggregate(d=Sum('debit'), c=Sum('credit'))
+    return (s['d'] or D0) - (s['c'] or D0)
+
+
+@transaction.atomic
+def reconcile_intercompany(as_of, user=None):
+    """Counterparty matching: sub-ledger (open IC transactions) vs GL IC accounts, both sides."""
+    out = []
+    for t in IntercompanyTransaction.objects.exclude(status='SETTLED').values('from_company', 'to_company', 'currency').distinct():
+        a, b = Company.objects.get(pk=t['from_company']), Company.objects.get(pk=t['to_company'])
+        open_t = IntercompanyTransaction.objects.filter(from_company=a, to_company=b, currency_id=t['currency']).exclude(status='SETTLED')
+        sub_r = sum((q2(x.outstanding * x.seller_rate) for x in open_t), D0)
+        sub_p = sum((q2(x.outstanding * x.buyer_rate) for x in open_t), D0)
+        gl_r, gl_p = _gl_net(a, 'IC_RECEIVABLE', as_of), -_gl_net(b, 'IC_PAYABLE', as_of)
+        diff = (gl_r - sub_r) + (gl_p - sub_p)
+        IntercompanyBalance.objects.create(company=a, counterparty=b, currency_id=t['currency'], receivable=sub_r, payable=sub_p,
+                                           gl_receivable=gl_r, gl_payable=gl_p, difference=diff, as_of_date=as_date(as_of))
+        out.append({'seller': a.code, 'buyer': b.code, 'currency': t['currency'], 'subledger_receivable': sub_r,
+                    'subledger_payable': sub_p, 'gl_receivable': gl_r, 'gl_payable': gl_p, 'difference': diff, 'reconciled': diff == 0})
+    return out
+
+
+def _account_balances(company_ids, date_from=None, date_to=None, types=None, exclude_closing=False):
+    qs = JournalLine.objects.filter(journal__company_id__in=company_ids)
+    if date_from:
+        qs = qs.filter(journal__date__gte=as_date(date_from))
+    if date_to:
+        qs = qs.filter(journal__date__lte=as_date(date_to))
+    if types:
+        qs = qs.filter(account__account_type__in=types)
+    if exclude_closing:
+        qs = qs.filter(journal__is_closing=False)
+    accts = {a.id: a for a in Account.objects.filter(company_id__in=company_ids).select_related('company')}
+    return {accts[r['account_id']]: (r['d'] or D0, r['c'] or D0)
+            for r in qs.values('account_id').annotate(d=Sum('debit'), c=Sum('credit'))}
+
+
+def _rep_ccy():
+    from django.conf import settings
+    return getattr(settings, 'REPORTING_CURRENCY', 'USD')
+
+
+def _fx_factor(company, on_date, target):
+    return get_rate(company.functional_currency_id, target, on_date)[0] if company.functional_currency_id != target else Decimal(1)
+
+
+@transaction.atomic
+def run_consolidation(period_start, period_end, user, reporting_currency=None):
+    """
+    Translate each entity's GL (single closing rate; no CTA) into the reporting currency, group accounts by
+    group_code, then eliminate intercompany balances/revenue so group revenue and expenses are not duplicated.
+    """
+    rc = reporting_currency or _rep_ccy()
+    companies = list(Company.objects.filter(is_active=True))
+    groups = defaultdict(lambda: [D0, D0, ''])           # group_code -> [net(Dr-Cr), ... , type]
+    per_company, types = {}, {}
+    for co in companies:
+        f = _fx_factor(co, period_end, rc)
+        pl = _account_balances([co.id], period_start, period_end, types=('REVENUE', 'EXPENSE'), exclude_closing=True)
+        bs = _account_balances([co.id], None, period_end, types=('ASSET', 'LIABILITY', 'EQUITY'))
+        net_pl = D0
+        for a, (d, c) in list(pl.items()) + list(bs.items()):
+            key = a.group_code or a.code
+            v = q2((d - c) * f)
+            groups[key][0] += v
+            types[key] = a.account_type
+            if a.account_type in ('REVENUE', 'EXPENSE'):
+                net_pl += v
+        per_company[co.code] = {'profit': -net_pl, 'currency': co.functional_currency_id, 'rate': f}
+    run = ConsolidationRun.objects.create(reference=f'CONS-{period_end:%Y%m%d}-{ConsolidationRun.objects.count() + 1}',
+                                          period_start=as_date(period_start), period_end=as_date(period_end),
+                                          reporting_currency_id=rc, created_by=user)
+    entries, n = [], 0
+    def elim(desc, dr, cr, amount, txn=None):
+        nonlocal n
+        n += 1
+        entries.append(EliminationJournal(run=run, entry_no=n, description=desc, account_group_code=dr, debit=amount, ic_transaction=txn))
+        entries.append(EliminationJournal(run=run, entry_no=n, description=desc, account_group_code=cr, credit=amount, ic_transaction=txn))
+        groups[dr][0] += amount
+        groups[cr][0] -= amount
+    rec, pay = groups.get('IC_RECEIVABLE', [D0])[0], groups.get('IC_PAYABLE', [D0])[0]
+    if rec or pay:
+        elim('Eliminate intercompany receivable vs payable', 'IC_PAYABLE', 'IC_RECEIVABLE', rec)
+        if rec + pay:                                    # unmatched residual -> flagged, never silently dropped
+            groups['IC_DIFFERENCE'][0] += rec + pay
+            types['IC_DIFFERENCE'] = 'EXPENSE'
+            groups['IC_PAYABLE'][0] -= rec + pay
+    ic_rev = -groups.get('IC_REVENUE', [D0])[0]
+    if ic_rev:
+        target = 'IC_PURCHASES' if groups.get('IC_PURCHASES', [D0])[0] else 'COGS'
+        elim(f'Eliminate intercompany revenue against {target} (review unrealised profit in buyer stock)',
+             'IC_REVENUE', target, ic_rev)
+    EliminationJournal.objects.bulk_create(entries)
+    lines = [{'group_code': k, 'type': types.get(k, ''), 'amount': str(-v[0] if types.get(k) in ('REVENUE', 'LIABILITY', 'EQUITY') else v[0])}
+             for k, v in sorted(groups.items()) if v[0]]
+    revenue = sum(dec(l['amount']) for l in lines if l['type'] == 'REVENUE')
+    expense = sum(dec(l['amount']) for l in lines if l['type'] == 'EXPENSE')
+    run.result = {'currency': rc, 'lines': lines, 'entities': per_company, 'group_revenue': str(revenue),
+                  'group_expenses': str(expense), 'group_profit': str(revenue - expense), 'eliminations': n}
+    run.status = 'COMPLETED'
+    run.save()
+    audit(user, 'CONSOLIDATION', run, {'profit': revenue - expense}, company=None)
+    return run
+
+
+# =========================================================== reports
+def _filters(request_params, user):
+    p = request_params
+    ids = user.allowed_company_ids()
+    if p.get('company'):
+        ids = [i for i in ids if str(i) == str(p['company'])]
+    if p.get('country'):
+        ids = [i for i in ids if Company.objects.get(pk=i).country == p['country']]
+    return {'company_ids': ids, 'date_from': as_date(p['date_from']) if p.get('date_from') else None,
+            'date_to': as_date(p.get('date_to')) if p.get('date_to') else today(), 'product': p.get('product'),
+            'customer': p.get('customer'), 'shipment': p.get('shipment'), 'account': p.get('account'), 'user': user}
+
+
+def _fin_rows(f, types, cumulative=False, exclude_closing=False):
+    """Account balances, translated to the reporting currency when several entities are selected."""
+    multi = len(f['company_ids']) > 1
+    out, total_rows = [], defaultdict(lambda: D0)
+    bal = _account_balances(f['company_ids'], None if cumulative else f['date_from'], f['date_to'], types, exclude_closing)
+    for a, (d, c) in sorted(bal.items(), key=lambda x: (x[0].company.code, x[0].code)):
+        k = _fx_factor(a.company, f['date_to'], _rep_ccy()) if multi else Decimal(1)
+        out.append((a, q2(d * k), q2(c * k)))
+    return out, (_rep_ccy() if multi else Company.objects.get(pk=f['company_ids'][0]).functional_currency_id) if f['company_ids'] else ''
+
+
+def report_trial_balance(f):
+    rows, ccy = _fin_rows(f, None, cumulative=True)
+    data = [[a.company.code, a.code, a.name, a.account_type, max(d - c, D0), max(c - d, D0)] for a, d, c in rows if d != c]
+    td, tc = sum(r[4] for r in data), sum(r[5] for r in data)
+    return {'title': f'Trial Balance ({ccy})', 'columns': ['Entity', 'Code', 'Account', 'Type', 'Debit', 'Credit'],
+            'rows': data + [['', '', 'TOTAL', '', td, tc]], 'summary': {'balanced': td == tc, 'debit': td, 'credit': tc}}
+
+
+def report_general_ledger(f):
+    if not f['account']:
+        err('Select an account (?account=ID).')
+    qs = JournalLine.objects.filter(account_id=f['account'], journal__company_id__in=f['company_ids'])
+    if f['date_from']:
+        qs = qs.filter(journal__date__gte=f['date_from'])
+    qs = qs.filter(journal__date__lte=f['date_to']).select_related('journal').order_by('journal__date', 'journal_id', 'id')
+    run, rows = D0, []
+    for l in qs:
+        run += l.debit - l.credit
+        rows.append([l.journal.date, l.journal.reference, l.journal.description, l.narration, l.debit, l.credit, run])
+    return {'title': 'General Ledger', 'columns': ['Date', 'Journal', 'Description', 'Narration', 'Debit', 'Credit', 'Balance'], 'rows': rows, 'summary': {'closing': run}}
+
+
+def report_profit_and_loss(f):
+    rows, ccy = _fin_rows(f, ('REVENUE', 'EXPENSE'), exclude_closing=True)
+    rev = sum((c - d for a, d, c in rows if a.account_type == 'REVENUE'), D0)
+    cogs = sum((d - c for a, d, c in rows if a.account_type == 'EXPENSE' and a.subtype == 'COGS'), D0)
+    opex = sum((d - c for a, d, c in rows if a.account_type == 'EXPENSE' and a.subtype != 'COGS'), D0)
+    out = [['REVENUE', '', '']] + [['', a.name, c - d] for a, d, c in rows if a.account_type == 'REVENUE' and c != d]
+    out += [['Total revenue', '', rev], ['COST OF SALES', '', '']] + [['', a.name, d - c] for a, d, c in rows if a.account_type == 'EXPENSE' and a.subtype == 'COGS' and c != d]
+    out += [['Gross profit', '', rev - cogs], ['OPERATING & FINANCE EXPENSES', '', '']] + [['', a.name, d - c] for a, d, c in rows if a.account_type == 'EXPENSE' and a.subtype != 'COGS' and c != d]
+    out += [['Total expenses', '', opex], ['NET PROFIT / (LOSS)', '', rev - cogs - opex]]
+    return {'title': f'Profit and Loss ({ccy})', 'columns': ['Section', 'Account', 'Amount'], 'rows': out,
+            'summary': {'revenue': rev, 'gross_profit': rev - cogs, 'net_profit': rev - cogs - opex, 'currency': ccy}}
+
+
+def report_financial_position(f):
+    rows, ccy = _fin_rows(f, None, cumulative=True)
+    sec = {'ASSET': [], 'LIABILITY': [], 'EQUITY': []}
+    pl = D0
+    for a, d, c in rows:
+        if a.account_type in sec and d != c:
+            sec[a.account_type].append((a, (d - c) if a.account_type == 'ASSET' else (c - d)))
+        elif a.account_type in ('REVENUE', 'EXPENSE'):
+            pl += c - d
+    out, tot = [], {}
+    for t in ('ASSET', 'LIABILITY', 'EQUITY'):
+        out.append([t, '', ''])
+        out += [['', a.name, v] for a, v in sec[t]]
+        if t == 'EQUITY':
+            out.append(['', 'Current period earnings (unclosed)', pl])
+        tot[t] = sum((v for _, v in sec[t]), D0) + (pl if t == 'EQUITY' else D0)
+        out.append([f'Total {t.lower()}', '', tot[t]])
+    return {'title': f'Statement of Financial Position ({ccy})', 'columns': ['Section', 'Account', 'Amount'], 'rows': out,
+            'summary': {'balanced': tot['ASSET'] == tot['LIABILITY'] + tot['EQUITY'], **{k.lower(): v for k, v in tot.items()}}}
+
+
+def report_cash_flow(f):
+    cash = JournalLine.objects.filter(journal__company_id__in=f['company_ids'], account__subtype__in=('CASH', 'BANK', 'MPESA'),
+                                      journal__date__lte=f['date_to'])
+    opening = cash.filter(journal__date__lt=f['date_from']) if f['date_from'] else cash.none()
+    op = (opening.aggregate(d=Sum('debit'), c=Sum('credit')))
+    op_bal = (op['d'] or D0) - (op['c'] or D0)
+    per = cash.filter(journal__date__gte=f['date_from']) if f['date_from'] else cash
+    rows, tin, tout = [], D0, D0
+    for r in per.values('journal__source_type').annotate(d=Sum('debit'), c=Sum('credit')).order_by('journal__source_type'):
+        rows.append([r['journal__source_type'] or 'Manual journal', r['d'] or D0, r['c'] or D0, (r['d'] or D0) - (r['c'] or D0)])
+        tin, tout = tin + (r['d'] or D0), tout + (r['c'] or D0)
+    rows.append(['TOTAL', tin, tout, tin - tout])
+    return {'title': 'Cash Flow Statement (direct, by source; functional currency of each entity)',
+            'columns': ['Source', 'Inflow', 'Outflow', 'Net'], 'rows': rows,
+            'summary': {'opening_cash': op_bal, 'net_movement': tin - tout, 'closing_cash': op_bal + tin - tout}}
+
+
+def report_equity_changes(f):
+    eq = _account_balances(f['company_ids'], None, f['date_to'], ('EQUITY',))
+    before = _account_balances(f['company_ids'], None, (f['date_from'] - timedelta(days=1)) if f['date_from'] else date.min, ('EQUITY',)) if f['date_from'] else {}
+    opening = sum((c - d for d, c in before.values()), D0)
+    closing_eq = sum((c - d for d, c in eq.values()), D0)
+    pl = report_profit_and_loss(f)['summary']['net_profit']
+    return {'title': 'Statement of Changes in Equity', 'columns': ['Item', 'Amount'],
+            'rows': [['Opening equity', opening], ['Profit / (loss) for the period', pl],
+                     ['Other equity movements', closing_eq - opening], ['Closing equity (booked reserves)', closing_eq]], 'summary': {}}
+
+
+def _aging(f, receivable):
+    as_of, rows, buckets = f['date_to'], [], defaultdict(lambda: [D0] * 5)
+    if receivable:
+        docs = [(i.customer.name, i) for i in SalesInvoice.objects.filter(company_id__in=f['company_ids'], status__in=('POSTED', 'PART_PAID')).select_related('customer')]
+    else:
+        carried = TransporterInvoice.objects.exclude(expense=None).values_list('expense_id', flat=True)
+        docs = [(i.supplier.name, i) for i in PurchaseInvoice.objects.filter(company_id__in=f['company_ids'], status__in=('POSTED', 'PART_PAID')).select_related('supplier')]
+        docs += [(i.transporter.name, i) for i in TransporterInvoice.objects.filter(company_id__in=f['company_ids'], status__in=('POSTED', 'PART_PAID')).select_related('transporter')]
+        docs += [(e.payee or 'Expense payee', e) for e in Expense.objects.filter(company_id__in=f['company_ids'], status='POSTED', payment_method='CREDIT').exclude(pk__in=carried)]
+    for name, d in docs:
+        out = q2(d.outstanding * d.exchange_rate)
+        due = getattr(d, 'due_date', None) or getattr(d, 'expense_date', None)
+        days = (as_of - due).days if due else 0
+        b = 0 if days <= 0 else 1 if days <= 30 else 2 if days <= 60 else 3 if days <= 90 else 4
+        buckets[name][b] += out
+    rows = [[n, *v, sum(v, D0)] for n, v in sorted(buckets.items())]
+    tot = [sum(r[i] for r in rows) if rows else D0 for i in range(1, 7)]
+    return {'title': 'Accounts Receivable Aging' if receivable else 'Accounts Payable Aging',
+            'columns': ['Party', 'Current', '1-30', '31-60', '61-90', '90+', 'Total'], 'rows': rows + ([['TOTAL', *tot]] if rows else []),
+            'summary': {'total': tot[-1]}}
+
+
+def report_ar_aging(f): return _aging(f, True)
+def report_ap_aging(f): return _aging(f, False)
+
+
+def report_vat(f):
+    rows = []
+    for co in Company.objects.filter(id__in=f['company_ids']):
+        for key, label in (('VAT_INPUT', 'Input tax'), ('VAT_OUTPUT', 'Output tax')):
+            a = AccountMapping.objects.filter(company=co, key=key).first()
+            if not a:
+                continue
+            q = JournalLine.objects.filter(account=a.account, journal__date__lte=f['date_to'])
+            if f['date_from']:
+                q = q.filter(journal__date__gte=f['date_from'])
+            s = q.aggregate(d=Sum('debit'), c=Sum('credit'))
+            rows.append([co.code, label, s['d'] or D0, s['c'] or D0, (s['d'] or D0) - (s['c'] or D0)])
+    return {'title': 'VAT / Tax Report', 'columns': ['Entity', 'Tax account', 'Debits', 'Credits', 'Net'], 'rows': rows, 'summary': {}}
+
+
+def report_bank_reconciliation(f):
+    qs = BankReconciliation.objects.filter(company_id__in=f['company_ids']).select_related('bank_account').order_by('-statement_date')[:50]
+    return {'title': 'Bank Reconciliations', 'columns': ['Ref', 'Account', 'Statement date', 'Statement balance', 'Book balance', 'Difference', 'Unmatched', 'Status'],
+            'rows': [[r.reference, r.bank_account.name, r.statement_date, r.statement_balance, r.book_balance, r.difference, r.unmatched_count, r.status] for r in qs], 'summary': {}}
+
+
+# ---- operational
+def report_fuel_purchases(f):
+    qs = GoodsReceipt.objects.filter(company_id__in=f['company_ids'], receipt_date__lte=f['date_to']).select_related('purchase_order__supplier', 'line__product', 'tank')
+    if f['date_from']: qs = qs.filter(receipt_date__gte=f['date_from'])
+    if f['product']: qs = qs.filter(line__product_id=f['product'])
+    return {'title': 'Fuel Purchases', 'columns': ['Date', 'GRN', 'Supplier', 'Product', 'Tank', 'Basis', 'Litres', 'Cost/L', 'Total cost'],
+            'rows': [[g.receipt_date, g.reference, g.purchase_order.supplier.name, g.line.product.name, g.tank.code, g.volume_basis, g.quantity, g.unit_cost, g.total_cost] for g in qs],
+            'summary': {'litres': qs.aggregate(s=Sum('quantity'))['s'] or D0, 'cost': qs.aggregate(s=Sum('total_cost'))['s'] or D0}}
+
+
+def report_fuel_sales(f):
+    qs = SalesInvoiceLine.objects.filter(invoice__company_id__in=f['company_ids'], invoice__status__in=('POSTED', 'PART_PAID', 'PAID'), invoice__invoice_date__lte=f['date_to']).select_related('invoice__customer', 'product')
+    if f['date_from']: qs = qs.filter(invoice__invoice_date__gte=f['date_from'])
+    if f['product']: qs = qs.filter(product_id=f['product'])
+    if f['customer']: qs = qs.filter(invoice__customer_id=f['customer'])
+    return {'title': 'Fuel Sales', 'columns': ['Date', 'Invoice', 'Customer', 'Product', 'Litres', 'Price/L', 'Net', 'Currency'],
+            'rows': [[l.invoice.invoice_date, l.invoice.reference, l.invoice.customer.name, l.product.name, l.quantity, l.unit_price, l.line_total, l.invoice.currency_id] for l in qs],
+            'summary': {'litres': qs.aggregate(s=Sum('quantity'))['s'] or D0}}
+
+
+def report_tank_reconciliation(f):
+    qs = TankReconciliation.objects.filter(company_id__in=f['company_ids'], recon_date__lte=f['date_to']).select_related('tank__depot', 'product', 'officer')
+    if f['date_from']: qs = qs.filter(recon_date__gte=f['date_from'])
+    return {'title': 'Tank Reconciliation', 'columns': ['Date', 'Depot', 'Tank', 'Product', 'Opening', 'Receipts', 'Transfers in', 'Issues', 'Transfers out', 'Closing book', 'Physical', 'Variance', 'Variance value', 'Officer', 'Status'],
+            'rows': [[r.recon_date, r.tank.depot.name, r.tank.code, r.product.name, r.opening_qty, r.receipts, r.transfers_in, r.issues, r.transfers_out, r.closing_book, r.physical_qty, r.variance, r.variance_value, str(r.officer or ''), r.status] for r in qs], 'summary': {}}
+
+
+def report_inventory_movement(f):
+    qs = StockMovement.objects.filter(company_id__in=f['company_ids'], movement_date__lte=f['date_to']).select_related('tank', 'product')
+    if f['date_from']: qs = qs.filter(movement_date__gte=f['date_from'])
+    if f['product']: qs = qs.filter(product_id=f['product'])
+    return {'title': 'Inventory Movement', 'columns': ['Date', 'Ref', 'Type', 'Tank', 'Product', 'Litres', 'Unit cost', 'Value', 'Balance after', 'Source'],
+            'rows': [[m.movement_date, m.reference, m.movement_type, m.tank.code, m.product.name, m.quantity, m.unit_cost, m.total_cost, m.balance_after, f'{m.source_type} {m.source_id}'] for m in qs.order_by('-movement_date', '-id')[:2000]], 'summary': {}}
+
+
+def report_stock_valuation(f):
+    qs = StockBalance.objects.filter(company_id__in=f['company_ids'], quantity__gt=0).select_related('company', 'tank__depot', 'product')
+    if f['product']: qs = qs.filter(product_id=f['product'])
+    rows = [[b.company.code, b.tank.depot.name, b.tank.code, b.product.name, b.quantity, b.avg_cost, b.value, valuation_method(b.company, b.product)] for b in qs]
+    return {'title': 'Stock Valuation (entity functional currency)', 'columns': ['Entity', 'Depot', 'Tank', 'Product', 'Litres', 'Avg cost/L', 'Value', 'Method'], 'rows': rows,
+            'summary': {'litres': sum((r[4] for r in rows), D0)}}
+
+
+def _latest_sheets(f):
+    qs = ShipmentCostSheet.objects.filter(company_id__in=f['company_ids']).select_related('shipment__customer', 'shipment__product', 'shipment__transporter', 'shipment__vehicle').order_by('shipment_id', '-version')
+    if f['product']: qs = qs.filter(shipment__product_id=f['product'])
+    if f['customer']: qs = qs.filter(shipment__customer_id=f['customer'])
+    if f['shipment']: qs = qs.filter(shipment_id=f['shipment'])
+    if f['date_from']: qs = qs.filter(shipment__loading_date__gte=f['date_from'])
+    seen, out = set(), []
+    for s in qs:
+        if s.shipment_id not in seen:
+            seen.add(s.shipment_id)
+            out.append(s)
+    return out
+
+
+def report_shipment_costing(f):
+    rows = [[s.shipment.reference, f'v{s.version}{" FINAL" if s.is_final else " prov."}', s.shipment.customer or '', s.shipment.product.name, s.loaded_litres, s.delivered_litres, s.purchase_cost, s.total_direct_expenses, s.total_shipment_cost, s.delivered_cost_per_litre, s.revenue, s.cogs, s.gross_profit, s.contribution, s.margin_pct] for s in _latest_sheets(f)]
+    return {'title': 'Shipment Costing', 'columns': ['Shipment', 'Version', 'Customer', 'Product', 'Loaded L', 'Delivered L', 'Purchase cost', 'Direct expenses', 'Total cost', 'Cost/L', 'Revenue', 'COGS', 'Gross profit', 'Contribution', 'Margin %'], 'rows': rows, 'summary': {'contribution': sum((r[13] for r in rows), D0)}}
+
+
+def report_shipment_profitability(f):
+    r = report_shipment_costing(f)
+    r['title'] = 'Shipment Profitability'
+    r['rows'].sort(key=lambda x: x[13], reverse=True)
+    return r
+
+
+def _group_sheets(f, keyfn, title, label):
+    g = defaultdict(lambda: [D0] * 5)
+    for s in _latest_sheets(f):
+        k = keyfn(s) or 'Unassigned'
+        for i, v in enumerate((s.delivered_litres, s.revenue, s.cogs, s.additional_expenses, s.contribution)):
+            g[k][i] += v
+    rows = [[k, v[0], v[1], v[2], v[3], v[4], q3(v[4] / v[1] * 100) if v[1] else D0] for k, v in sorted(g.items(), key=lambda x: -x[1][4])]
+    return {'title': title, 'columns': [label, 'Delivered L', 'Revenue', 'COGS', 'Other direct exp.', 'Contribution', 'Margin %'], 'rows': rows, 'summary': {}}
+
+
+def report_customer_profitability(f): return _group_sheets(f, lambda s: str(s.shipment.customer or ''), 'Customer Profitability', 'Customer')
+def report_product_profitability(f): return _group_sheets(f, lambda s: s.shipment.product.name, 'Product Profitability', 'Product')
+def report_transporter_profitability(f): return _group_sheets(f, lambda s: str(s.shipment.transporter) if s.shipment.transporter_id else 'Owned fleet', 'Transporter Profitability', 'Transporter')
+
+
+def _entity_pl(f, key):
+    rows = []
+    for co in Company.objects.filter(id__in=f['company_ids']):
+        ff = dict(f, company_ids=[co.id])
+        s = report_profit_and_loss(ff)['summary']
+        rows.append([getattr(co, key) if key != 'country' else co.get_country_display(), co.code, s['currency'], s['revenue'], s['gross_profit'], s['net_profit']])
+    return rows
+
+
+def report_entity_profitability(f):
+    return {'title': 'Entity Profitability (functional currencies)', 'columns': ['Entity', 'Code', 'Currency', 'Revenue', 'Gross profit', 'Net profit'], 'rows': _entity_pl(f, 'name'), 'summary': {}}
+
+
+def report_country_profitability(f):
+    return {'title': 'Country Profitability (functional currencies)', 'columns': ['Country', 'Entity', 'Currency', 'Revenue', 'Gross profit', 'Net profit'], 'rows': _entity_pl(f, 'country'), 'summary': {}}
+
+
+def report_group_consolidated(f):
+    run = ConsolidationRun.objects.filter(status='COMPLETED').order_by('-id').first()
+    if not run:
+        err('Run a consolidation first (Group > Consolidation).')
+    r = run.result
+    return {'title': f'Group Consolidated ({r["currency"]}) {run.period_start} to {run.period_end}', 'columns': ['Group account', 'Type', 'Amount'],
+            'rows': [[l['group_code'], l['type'], dec(l['amount'])] for l in r['lines']], 'summary': {k: r[k] for k in ('group_revenue', 'group_expenses', 'group_profit')}}
+
+
+def report_fuel_variance(f):
+    rows = []
+    for s in _latest_sheets(f):
+        fv = fuel_variance(s.shipment)
+        if s.shortage_litres > 0 or (fv and fv['flag']):
+            rows.append([s.shipment.reference, s.loaded_litres, s.delivered_litres, s.shortage_litres, s.shortage_value, fv['expected_litres'] if fv else '', fv['actual_litres'] if fv else '', fv['variance_pct'] if fv else ''])
+    return {'title': 'Fuel Variance (transit shortages & truck fuel use)', 'columns': ['Shipment', 'Loaded L', 'Delivered L', 'Shortage L', 'Shortage value', 'Expected truck fuel L', 'Actual truck fuel L', 'Fuel var %'], 'rows': rows, 'summary': {}}
+
+
+def report_daily_shipments(f):
+    qs = Shipment.objects.filter(company_id__in=f['company_ids']).select_related('customer', 'product')
+    if f['date_from']: qs = qs.filter(loading_date__gte=f['date_from'])
+    qs = qs.filter(Q(loading_date__lte=f['date_to']) | Q(loading_date__isnull=True))
+    return {'title': 'Daily Shipments', 'columns': ['Shipment', 'Loading date', 'Customer', 'Product', 'Litres', 'Truck', 'Status', 'Expected delivery'],
+            'rows': [[s.reference, s.loading_date, str(s.customer or ''), s.product.name, s.loading_quantity or s.quantity, str(s.vehicle or s.hired_truck or ''), s.status, s.expected_delivery] for s in qs.order_by('-loading_date')[:1000]], 'summary': {}}
+
+
+def report_daily_operations(f):
+    d = f['date_to']
+    ids = f['company_ids']
+    rows = [['Goods receipts', GoodsReceipt.objects.filter(company_id__in=ids, receipt_date=d).aggregate(s=Sum('quantity'))['s'] or D0],
+            ['Litres dispatched', StockMovement.objects.filter(company_id__in=ids, movement_date=d, movement_type='ISSUE').aggregate(s=Sum('quantity'))['s'] or D0],
+            ['Litres delivered', ShipmentDelivery.objects.filter(company_id__in=ids, delivery_date=d, status='APPROVED').aggregate(s=Sum('delivered_quantity'))['s'] or D0],
+            ['Invoices posted', SalesInvoice.objects.filter(company_id__in=ids, invoice_date=d, status__in=('POSTED', 'PART_PAID', 'PAID')).count()],
+            ['Expenses posted', Expense.objects.filter(company_id__in=ids, expense_date=d, status__in=('POSTED', 'PAID')).count()],
+            ['Shipments active', Shipment.objects.filter(company_id__in=ids, status__in=ACTIVE_SHIPMENT).count()]]
+    return {'title': f'Daily Operations {d}', 'columns': ['Measure', 'Value'], 'rows': rows, 'summary': {}}
+
+
+# ---- fleet
+def _vehicle_rows(f):
+    rows = []
+    for v in Vehicle.objects.filter(company_id__in=f['company_ids']):
+        ex = Expense.objects.filter(vehicle=v, status__in=('POSTED', 'PAID'))
+        sh = Shipment.objects.filter(vehicle=v).exclude(status='CANCELLED')
+        if f['date_from']: ex, sh = ex.filter(expense_date__gte=f['date_from']), sh.filter(loading_date__gte=f['date_from'])
+        cost = sum((e.functional_total for e in ex), D0)
+        km, trips = sh.aggregate(s=Sum('distance_km'))['s'] or D0, sh.count()
+        sheets = ShipmentCostSheet.objects.filter(shipment__in=sh).order_by('shipment_id', '-version')
+        seen, rev, lit = set(), D0, D0
+        for s in sheets:
+            if s.shipment_id not in seen:
+                seen.add(s.shipment_id); rev += s.revenue; lit += s.delivered_litres
+        rows.append([v.registration_number, trips, km, cost, q2(cost / km) if km else D0, q2(cost / trips) if trips else D0, q6(cost / lit) if lit else D0, rev, rev - cost])
+    return rows
+
+
+def report_owned_fleet(f):
+    return {'title': 'Owned Fleet', 'columns': ['Vehicle', 'Trips', 'Km', 'Operating cost', 'Cost/km', 'Cost/trip', 'Cost/delivered L', 'Revenue', 'Profit'], 'rows': _vehicle_rows(f), 'summary': {}}
+
+
+def report_vehicle_profitability(f):
+    r = report_owned_fleet(f); r['title'] = 'Vehicle Profitability'; r['rows'].sort(key=lambda x: x[-1], reverse=True); return r
+
+
+def report_trip_costs(f):
+    rows = [[s.shipment.reference, str(s.shipment.vehicle or s.shipment.hired_truck or ''), s.shipment.truck_ownership, s.components.get('TRANSPORT_OWNED'), s.components.get('TRANSPORT_HIRED'), s.components.get('DRIVER'), s.components.get('FUEL'), s.components.get('BORDER'), s.total_direct_expenses] for s in _latest_sheets(f)]
+    return {'title': 'Trip Costs (owned vs hired kept separate)', 'columns': ['Shipment', 'Truck', 'Ownership', 'Owned transport', 'Hired transport', 'Driver', 'Fuel', 'Border', 'Total direct'], 'rows': rows, 'summary': {}}
+
+
+def report_hired_fleet(f):
+    qs = TransportBooking.objects.filter(company_id__in=f['company_ids']).select_related('transporter', 'truck')
+    return {'title': 'Hired Fleet', 'columns': ['Booking', 'Transporter', 'Truck', 'Litres', 'Rate', 'Total charge', 'Advance', 'Balance', 'Status'],
+            'rows': [[b.reference, b.transporter.name, b.truck.registration_number, b.quantity, b.contracted_rate, b.total_charge, b.advance_paid, b.balance_payable, b.status] for b in qs], 'summary': {}}
+
+
+def _expense_by(f, title, **flt):
+    qs = Expense.objects.filter(company_id__in=f['company_ids'], status__in=('POSTED', 'PAID'), expense_date__lte=f['date_to'], **flt).select_related('category', 'vehicle')
+    if f['date_from']: qs = qs.filter(expense_date__gte=f['date_from'])
+    return {'title': title, 'columns': ['Date', 'Ref', 'Category', 'Vehicle', 'Description', 'Total (functional)'],
+            'rows': [[e.expense_date, e.reference, e.category.name, str(e.vehicle or ''), e.description, e.functional_total] for e in qs], 'summary': {}}
+
+
+def report_vehicle_expenses(f): return _expense_by(f, 'Vehicle Expenses', vehicle__isnull=False)
+def report_driver_expenses(f): return _expense_by(f, 'Driver Expenses', category__cost_component='DRIVER')
+
+
+REPORTS = {   # name -> (function, permission)
+    'trial-balance': (report_trial_balance, 'finance.view'), 'general-ledger': (report_general_ledger, 'finance.view'),
+    'profit-and-loss': (report_profit_and_loss, 'finance.view'), 'financial-position': (report_financial_position, 'finance.view'),
+    'cash-flow': (report_cash_flow, 'finance.view'), 'equity-changes': (report_equity_changes, 'finance.view'),
+    'ar-aging': (report_ar_aging, 'finance.view'), 'ap-aging': (report_ap_aging, 'finance.view'),
+    'bank-reconciliation': (report_bank_reconciliation, 'finance.view'), 'vat': (report_vat, 'finance.view'),
+    'daily-operations': (report_daily_operations, 'reports.view'), 'daily-shipments': (report_daily_shipments, 'reports.view'),
+    'fuel-purchases': (report_fuel_purchases, 'reports.view'), 'fuel-sales': (report_fuel_sales, 'reports.view'),
+    'tank-reconciliation': (report_tank_reconciliation, 'reports.view'), 'inventory-movement': (report_inventory_movement, 'reports.view'),
+    'stock-valuation': (report_stock_valuation, 'reports.view'), 'shipment-costing': (report_shipment_costing, 'costing.view'),
+    'fuel-variance': (report_fuel_variance, 'reports.view'), 'owned-fleet': (report_owned_fleet, 'reports.view'),
+    'hired-fleet': (report_hired_fleet, 'reports.view'), 'vehicle-expenses': (report_vehicle_expenses, 'reports.view'),
+    'trip-costs': (report_trip_costs, 'costing.view'), 'driver-expenses': (report_driver_expenses, 'reports.view'),
+    'vehicle-profitability': (report_vehicle_profitability, 'costing.view'),
+    'customer-profitability': (report_customer_profitability, 'costing.view'), 'product-profitability': (report_product_profitability, 'costing.view'),
+    'shipment-profitability': (report_shipment_profitability, 'costing.view'), 'transporter-profitability': (report_transporter_profitability, 'costing.view'),
+    'country-profitability': (report_country_profitability, 'finance.view'), 'entity-profitability': (report_entity_profitability, 'finance.view'),
+    'group-consolidated': (report_group_consolidated, 'group.view'),
+}
+
+
+# =========================================================== dashboard
+def dashboard_metrics(f, period='monthly'):
+    ids, end = f['company_ids'], f['date_to']
+    start = f['date_from'] or {'daily': end, 'weekly': end - timedelta(days=6), 'monthly': end.replace(day=1), 'annual': end.replace(month=1, day=1)}.get(period, end.replace(day=1))
+    rc, missing = _rep_ccy(), set()
+    def rep(co, amount, d):
+        try:
+            return q2(amount * _fx_factor(co, d, rc))
+        except ValidationError:
+            missing.add(f'{co.functional_currency_id}->{rc}')
+            return D0
+    cos = {c.id: c for c in Company.objects.filter(id__in=ids)}
+    revenue, by_country, purchases, opex, cogs = D0, defaultdict(lambda: D0), D0, D0, D0
+    for l in SalesInvoiceLine.objects.filter(invoice__company_id__in=ids, invoice__status__in=('POSTED', 'PART_PAID', 'PAID'), invoice__invoice_date__range=(start, end)).select_related('invoice'):
+        if f['product'] and str(l.product_id) != str(f['product']): continue
+        if f['customer'] and str(l.invoice.customer_id) != str(f['customer']): continue
+        co = cos[l.invoice.company_id]
+        v = rep(co, q2(l.line_total * l.invoice.exchange_rate), end)
+        revenue += v; by_country[co.get_country_display()] += v
+    for g in GoodsReceipt.objects.filter(company_id__in=ids, receipt_date__range=(start, end)):
+        if f['product'] and str(g.line.product_id) != str(f['product']): continue
+        purchases += rep(cos[g.company_id], g.total_cost, end)
+    gl = _account_balances(ids, start, end, ('EXPENSE',), exclude_closing=True)
+    for a, (d, c) in gl.items():
+        v = rep(a.company, d - c, end)
+        if a.subtype == 'COGS': cogs += v
+        else: opex += v
+    gross = revenue - cogs
+    def cash_by(sub):
+        t = D0
+        for co in cos.values():
+            t += rep(co, _gl_net_multi(co, sub, end), end)
+        return t
+    ar = sum((rep(i.company, q2(i.outstanding * i.exchange_rate), end) for i in SalesInvoice.objects.filter(company_id__in=ids, status__in=('POSTED', 'PART_PAID')).select_related('company')), D0)
+    ap = sum((rep(i.company, q2(i.outstanding * i.exchange_rate), end) for M in (PurchaseInvoice, TransporterInvoice) for i in M.objects.filter(company_id__in=ids, status__in=('POSTED', 'PART_PAID')).select_related('company')), D0)
+    stock = StockBalance.objects.filter(company_id__in=ids).aggregate(q=Sum('quantity'))['q'] or D0
+    transit = ShipmentLine.objects.filter(shipment__company_id__in=ids, shipment__stock_issued=True, shipment__status__in=ACTIVE_SHIPMENT).aggregate(q=Sum('loaded_quantity'))['q'] or D0
+    sh = Shipment.objects.filter(company_id__in=ids)
+    if f['product']: sh = sh.filter(product_id=f['product'])
+    if f['customer']: sh = sh.filter(customer_id=f['customer'])
+    active = sh.filter(status__in=ACTIVE_SHIPMENT + ('APPROVED', 'AWAITING_LOADING')).count()
+    delayed = sh.filter(status__in=ACTIVE_SHIPMENT, expected_delivery__lt=timezone.now()).count()
+    fleet = Vehicle.objects.filter(company_id__in=ids).exclude(status='INACTIVE').count()
+    on_trip = Vehicle.objects.filter(company_id__in=ids, status='ON_TRIP').count()
+    months, rev_t, margin_t = [], [], []
+    for k in range(5, -1, -1):
+        ms = (end.replace(day=1) - timedelta(days=30 * k)).replace(day=1)
+        me = (ms.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+        r = sum((rep(cos[l.invoice.company_id], q2(l.line_total * l.invoice.exchange_rate), me) for l in SalesInvoiceLine.objects.filter(invoice__company_id__in=ids, invoice__status__in=('POSTED', 'PART_PAID', 'PAID'), invoice__invoice_date__range=(ms, me)).select_related('invoice')), D0)
+        c = sum((rep(a.company, d - cc, me) for a, (d, cc) in _account_balances(ids, ms, me, ('EXPENSE',), True).items() if a.subtype == 'COGS'), D0)
+        months.append(ms.strftime('%b %Y')); rev_t.append(r); margin_t.append(q3((r - c) / r * 100) if r else D0)
+    exp_cat = defaultdict(lambda: D0)
+    for e in Expense.objects.filter(company_id__in=ids, status__in=('POSTED', 'PAID'), expense_date__range=(start, end)).select_related('category', 'company'):
+        exp_cat[e.category.name] += rep(e.company, e.functional_total, end)
+    sheets = sorted(_latest_sheets(dict(f, date_from=start)), key=lambda s: -s.contribution)[:8]
+    return {'period': {'from': start, 'to': end, 'granularity': period}, 'currency': rc, 'fx_missing': sorted(missing),
+            'cards': {'group_revenue': revenue, 'revenue_by_country': dict(by_country), 'total_purchases': purchases, 'operating_expenses': opex,
+                      'gross_profit': gross, 'net_profit': gross - opex, 'cash_balance': cash_by('CASH') + cash_by('PETTY'),
+                      'bank_balance': cash_by('BANK'), 'mpesa_balance': cash_by('MPESA'), 'receivables': ar, 'payables': ap,
+                      'fuel_stock_litres': stock, 'stock_in_transit_litres': transit, 'active_shipments': active,
+                      'completed_shipments': sh.filter(status__in=('DELIVERED', 'RECONCILIATION_PENDING', 'CLOSED')).count(),
+                      'delayed_shipments': delayed, 'fleet_utilization_pct': q3(on_trip / fleet * 100) if fleet else D0},
+            'charts': {'revenue_trend': {'labels': months, 'revenue': rev_t, 'margin_pct': margin_t},
+                       'expense_analysis': sorted(({'category': k, 'amount': v} for k, v in exp_cat.items()), key=lambda x: -x['amount'])[:10],
+                       'shipment_profitability': [{'shipment': s.shipment.reference, 'contribution': s.contribution, 'margin_pct': s.margin_pct} for s in sheets]}}
+
+
+def _gl_net_multi(company, subtype, on_date):
+    return _gl_net(company, subtype, on_date)
+
+
+# =========================================================== Excel / PDF export
+def export_table(title, columns, rows, fmt):
+    """Return (bytes, content_type, extension)."""
+    clean = lambda v: '' if v is None else (float(v) if isinstance(v, Decimal) else (v if isinstance(v, (int, float, date, datetime)) else str(v)))
+    data = [[clean(c) for c in r] for r in rows]
+    if fmt == 'xlsx':
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill
+        wb = openpyxl.Workbook(); ws = wb.active; ws.title = title[:30]
+        ws.append([title]); ws['A1'].font = Font(bold=True, size=13)
+        ws.append(columns)
+        for c in ws[2]:
+            c.font, c.fill = Font(bold=True, color='FFFFFF'), PatternFill('solid', fgColor='0B1F3A')
+        for r in data:
+            ws.append([x.replace(tzinfo=None) if isinstance(x, datetime) and x.tzinfo else x for x in r])
+        for col in ws.columns:
+            ws.column_dimensions[col[0].column_letter].width = min(max(len(str(c.value or '')) for c in col) + 2, 45)
+        buf = io.BytesIO(); wb.save(buf)
+        return buf.getvalue(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'xlsx'
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Table, TableStyle
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=24, rightMargin=24, topMargin=24, bottomMargin=24)
+    t = Table([columns] + [[str(c)[:28] for c in r] for r in data], repeatRows=1)
+    t.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0B1F3A')), ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                           ('FONTSIZE', (0, 0), (-1, -1), 7), ('GRID', (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                           ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F3F6F4')])]))
+    doc.build([Paragraph(title, getSampleStyleSheet()['Title']), t])
+    return buf.getvalue(), 'application/pdf', 'pdf'
+
+
+def cost_sheet_table(sheet):
+    sh = sheet.shipment
+    rows = [['Shipment', sh.reference], ['Version', f'{sheet.version} ({"FINAL" if sheet.is_final else "provisional"})'],
+            ['Product', sh.product.name], ['Customer', str(sh.customer or '')], ['Loaded litres', sheet.loaded_litres],
+            ['Delivered litres', sheet.delivered_litres], ['Shortage litres', sheet.shortage_litres], ['Purchase cost', sheet.purchase_cost]]
+    rows += [[k.replace('_', ' ').title(), v] for k, v in sheet.components.items() if dec(v)]
+    rows += [['Total direct expenses', sheet.total_direct_expenses], ['TOTAL SHIPMENT COST', sheet.total_shipment_cost],
+             ['Delivered cost per litre', sheet.delivered_cost_per_litre], ['Invoiced litres', sheet.invoiced_litres],
+             ['Revenue', sheet.revenue], ['COGS', sheet.cogs], ['Gross profit', sheet.gross_profit],
+             ['Other direct expenses (not in COGS)', sheet.additional_expenses], ['Contribution', sheet.contribution], ['Margin %', sheet.margin_pct]]
+    return f'Shipment Cost Sheet {sh.reference}', ['Item', 'Value'], rows
+
+
+# =========================================================== AI & intelligence (read-only; alerts only)
+def detect_expense_anomalies(company_ids, z=3.0):
+    import statistics
+    out = []
+    for cat in ExpenseCategory.objects.all():
+        xs = list(Expense.objects.filter(company_id__in=company_ids, category=cat, status__in=('POSTED', 'PAID')).order_by('id'))
+        vals = [float(e.functional_total) for e in xs]
+        if len(vals) >= 5 and statistics.pstdev(vals) > 0:
+            m, sd = statistics.mean(vals), statistics.pstdev(vals)
+            out += [{'expense': e.reference, 'category': cat.name, 'amount': e.functional_total, 'z_score': round((float(e.functional_total) - m) / sd, 2)}
+                    for e in xs if abs((float(e.functional_total) - m) / sd) >= z]
+    return out
+
+
+def detect_duplicate_invoices(company_ids):
+    out, seen = [], defaultdict(list)
+    for i in PurchaseInvoice.objects.filter(company_id__in=company_ids).exclude(status='CANCELLED'):
+        seen[(i.company_id, i.supplier_id, i.total, i.invoice_date)].append(i)
+    for k, v in seen.items():
+        if len(v) > 1:
+            out.append({'invoices': [i.supplier_invoice_no for i in v], 'supplier': str(v[0].supplier), 'amount': v[0].total, 'date': v[0].invoice_date})
+    return out
+
+
+def customer_credit_risk(company_ids):
+    rows = []
+    for c in Customer.objects.filter(company_id__in=company_ids):
+        invs = SalesInvoice.objects.filter(customer=c, status__in=('POSTED', 'PART_PAID'))
+        od = [i for i in invs if i.due_date and i.due_date < today()]
+        exposure, overdue = customer_exposure(c), sum((q2(i.outstanding * i.exchange_rate) for i in od), D0)
+        score = min(100, int((overdue / exposure * 60 if exposure else 0) + (max((today() - i.due_date).days for i in od) / 90 * 40 if od else 0)))
+        rows.append({'customer': c.name, 'exposure': exposure, 'overdue': overdue, 'credit_limit': c.credit_limit,
+                     'utilisation_pct': q3(exposure / c.credit_limit * 100) if c.credit_limit else None, 'risk_score': score,
+                     'risk': 'HIGH' if score >= 60 else 'MEDIUM' if score >= 30 else 'LOW'})
+    return sorted(rows, key=lambda r: -r['risk_score'])
+
+
+def cash_forecast(company_ids, days=30):
+    cos = Company.objects.filter(id__in=company_ids)
+    rc, cash = _rep_ccy(), D0
+    for c in cos:
+        cash += sum((q2(_gl_net(c, s, today()) * _fx_factor(c, today(), rc)) for s in ('CASH', 'BANK', 'MPESA', 'PETTY')), D0)
+    horizon, inflow, outflow = today() + timedelta(days=days), D0, D0
+    for i in SalesInvoice.objects.filter(company_id__in=company_ids, status__in=('POSTED', 'PART_PAID'), due_date__lte=horizon).select_related('company'):
+        inflow += q2(i.outstanding * i.exchange_rate * _fx_factor(i.company, today(), rc))
+    for M in (PurchaseInvoice, TransporterInvoice):
+        for i in M.objects.filter(company_id__in=company_ids, status__in=('POSTED', 'PART_PAID'), due_date__lte=horizon).select_related('company'):
+            outflow += q2(i.outstanding * i.exchange_rate * _fx_factor(i.company, today(), rc))
+    return {'currency': rc, 'horizon_days': days, 'opening_cash': cash, 'expected_collections': inflow, 'expected_payments': outflow,
+            'projected_cash': cash + inflow - outflow, 'basis': 'Open invoices falling due within the horizon (no assumed new sales).'}
+
+
+def price_recommendation(company, product, target_margin_pct):
+    cost = estimate_cost_per_litre(company, product)
+    if cost is None:
+        err('No cost history for this product.')
+    r = calc_price('COST_PLUS', cost=cost, margin_pct=target_margin_pct)
+    last = SalesInvoiceLine.objects.filter(invoice__company=company, product=product, invoice__status__in=('POSTED', 'PART_PAID', 'PAID')).order_by('-id').first()
+    r['last_selling_price'] = last.unit_price if last else None
+    return r
+
+
+def supplier_price_comparison(company_ids, product_id=None):
+    qs = SupplierPrice.objects.filter(company_id__in=company_ids).select_related('supplier', 'product', 'currency').order_by('supplier_id', 'product_id', '-effective_date', '-id')
+    seen, rows = set(), []
+    for p in qs:
+        if product_id and str(p.product_id) != str(product_id): continue
+        if (p.supplier_id, p.product_id) in seen: continue
+        seen.add((p.supplier_id, p.product_id))
+        rows.append({'supplier': p.supplier.name, 'product': p.product.name, 'price': p.price, 'currency': p.currency_id, 'date': p.effective_date, 'source': p.source})
+    return sorted(rows, key=lambda r: (r['product'], r['price']))
+
+
+@transaction.atomic
+def run_ai_scan(company_ids, user):
+    """Persist rule-based findings as Alerts. Alerts inform humans; nothing is approved or posted."""
+    made = []
+    def add(co, kind, sev, msg, data):
+        made.append(Alert.objects.create(company_id=co, kind=kind, severity=sev, message=msg, data=json.loads(json.dumps(data, default=str)), created_by=user))
+    co0 = company_ids[0] if company_ids else None
+    for a in detect_expense_anomalies(company_ids): add(co0, 'EXPENSE_ANOMALY', 'WARNING', f'Unusual expense {a["expense"]} in {a["category"]} (z={a["z_score"]})', a)
+    for d in detect_duplicate_invoices(company_ids): add(co0, 'DUPLICATE_INVOICE', 'CRITICAL', f'Possible duplicate invoices from {d["supplier"]}: {", ".join(d["invoices"])}', d)
+    for s in Shipment.objects.filter(company_id__in=company_ids, fuel_used_litres__gt=0):
+        fv = fuel_variance(s)
+        if fv and fv['flag']: add(s.company_id, 'FUEL_VARIANCE', 'WARNING', f'{s.reference}: truck fuel {fv["variance_pct"]}% above norm', fv)
+    for r in customer_credit_risk(company_ids):
+        if r['risk'] == 'HIGH': add(co0, 'CREDIT_RISK', 'CRITICAL', f'{r["customer"]} is high credit risk (score {r["risk_score"]})', r)
+    return made
+
+
+def ai_answer(question, f):
+    """Deterministic natural-language assistant: maps questions to real database queries (no invented numbers)."""
+    q, ids = question.lower(), f['company_ids']
+    ff = dict(f, date_from=f['date_to'].replace(day=1))
+    sheets = _latest_sheets(ff if ('month' in q) else dict(f, date_from=None))
+    if 'highest profit' in q or 'most profit' in q:
+        s = max(sheets, key=lambda s: s.contribution, default=None)
+        return {'intent': 'top_shipment', 'answer': f'{s.shipment.reference} made the highest contribution: {s.contribution} (margin {s.margin_pct}%).' if s else 'No costed shipments found.', 'data': []}
+    if 'transporter' in q and ('expensive' in q or 'cost' in q):
+        rows = TransportBooking.objects.filter(company_id__in=ids, quantity__gt=0).exclude(status='CANCELLED').values('transporter__name').annotate(c=Sum('total_charge'), l=Sum('quantity'))
+        rk = sorted(((r['transporter__name'], q6(r['c'] / r['l'])) for r in rows), key=lambda x: -x[1])
+        return {'intent': 'transporter_cost', 'answer': f'{rk[0][0]} is the most expensive at {rk[0][1]} per litre.' if rk else 'No transporter bookings yet.', 'data': rk}
+    if 'transport cost per litre' in q or 'average transport' in q:
+        t = sum((dec(s.components.get('TRANSPORT_HIRED')) + dec(s.components.get('TRANSPORT_OWNED')) for s in sheets), D0)
+        l = sum((s.delivered_litres for s in sheets), D0)
+        return {'intent': 'avg_transport', 'answer': f'Average transport cost is {q6(t / l)} per delivered litre.' if l else 'No delivered litres yet.', 'data': []}
+    if 'overdue' in q:
+        rows = [[r['customer'], r['overdue']] for r in customer_credit_risk(ids) if r['overdue']]
+        return {'intent': 'overdue', 'answer': f'{len(rows)} customer(s) have overdue balances.' if rows else 'No overdue customer balances.', 'data': rows}
+    if 'border' in q:
+        t = sum((dec(s.components.get('BORDER')) + dec(s.components.get('CLEARING')) for s in sheets), D0)
+        return {'intent': 'border_spend', 'answer': f'Border and clearing spend on costed shipments: {t}.', 'data': []}
+    if 'profit' in q and ('kenya' in q or 'drc' in q or 'congo' in q):
+        code = 'KE' if 'kenya' in q else 'CD'
+        co = Company.objects.filter(country=code, id__in=ids).first()
+        if not co: return {'intent': 'entity_profit', 'answer': 'You do not have access to that entity.', 'data': []}
+        s = report_profit_and_loss(dict(f, company_ids=[co.id]))['summary']
+        return {'intent': 'entity_profit', 'answer': f'{co.name} net profit: {s["net_profit"]} {s["currency"]} (revenue {s["revenue"]}).', 'data': []}
+    if 'top' in q and 'expense' in q:
+        rows = Expense.objects.filter(company_id__in=ids, status__in=('POSTED', 'PAID')).values('category__name').annotate(t=Sum('functional_total')).order_by('-t')[:5]
+        return {'intent': 'top_expenses', 'answer': 'Top expenses: ' + '; '.join(f'{r["category__name"]} {r["t"]}' for r in rows), 'data': list(rows)}
+    if 'fuel loss' in q or 'shortage' in q or 'loss' in q:
+        rows = [[s.shipment.reference, s.shortage_litres, s.shortage_value] for s in sheets if s.shortage_litres > 0]
+        return {'intent': 'fuel_loss', 'answer': f'{len(rows)} shipment(s) had transit losses.' if rows else 'No shipment losses recorded.', 'data': rows}
+    if 'cash' in q and ('project' in q or 'forecast' in q or 'position' in q):
+        c = cash_forecast(ids)
+        return {'intent': 'cash_forecast', 'answer': f'Projected 30-day cash: {c["projected_cash"]} {c["currency"]}. {c["basis"]}', 'data': [c]}
+    return {'intent': 'unknown', 'answer': 'I can answer questions on shipment profit, transporter cost, border spend, overdue customers, entity profit, top expenses, fuel losses and cash projection.', 'data': []}
+
+
+# =========================================================== roles & permissions
+MODULES = ['company', 'suppliers', 'procurement', 'inventory', 'customers', 'sales', 'fleet', 'transport', 'shipments',
+           'customs', 'expenses', 'costing', 'finance', 'payments', 'group', 'hr', 'assets', 'reports', 'ai', 'audit', 'admin']
+EXTRA_PERMS = ['approvals.decide', 'payments.approve', 'payments.execute', 'finance.post', 'finance.close_period',
+               'sales.below_margin', 'procurement.override_match', 'credit.override', 'inventory.adjust', 'costing.finalize']
+ALL_PERMS = [f'{m}.{a}' for m in MODULES for a in ('view', 'edit')] + EXTRA_PERMS
+_v = lambda *m: [f'{x}.view' for x in m]
+_e = lambda *m: [f'{x}.{a}' for x in m for a in ('view', 'edit')]
+ROLE_PERMISSIONS = {
+    'GROUP_ADMIN': ALL_PERMS,
+    'MD': [p for p in ALL_PERMS if p.endswith('.view')] + ['approvals.decide', 'payments.approve', 'ai.edit'],
+    'KE_FINANCE_MANAGER': _e('finance', 'payments', 'expenses', 'costing', 'assets', 'hr', 'reports', 'ai', 'company') + _v('suppliers', 'procurement', 'inventory', 'shipments', 'group', 'transport', 'fleet') + ['approvals.decide', 'payments.approve', 'finance.post', 'finance.close_period', 'costing.finalize'],
+    'DRC_FINANCE_MANAGER': _e('finance', 'payments', 'expenses', 'costing', 'assets', 'hr', 'reports', 'ai', 'customers') + _v('sales', 'inventory', 'shipments', 'group') + ['approvals.decide', 'payments.approve', 'finance.post', 'finance.close_period', 'costing.finalize', 'credit.override'],
+    'ACCOUNTANT': _e('finance', 'expenses', 'payments', 'costing', 'reports') + _v('suppliers', 'customers', 'procurement', 'sales', 'shipments', 'inventory') + ['finance.post', 'payments.execute'],
+    'PROCUREMENT_MANAGER': _e('suppliers', 'procurement', 'inventory') + _v('reports', 'shipments') + ['approvals.decide', 'procurement.override_match'],
+    'PROCUREMENT_OFFICER': _e('suppliers', 'procurement') + _v('inventory'),
+    'SALES_MANAGER': _e('customers', 'sales') + _v('shipments', 'inventory', 'reports', 'costing') + ['approvals.decide', 'sales.below_margin', 'credit.override'],
+    'SALES_OFFICER': _e('customers', 'sales') + _v('inventory', 'shipments'),
+    'FLEET_MANAGER': _e('fleet', 'transport', 'expenses', 'shipments') + _v('inventory', 'reports'),
+    'LOGISTICS_MANAGER': _e('shipments', 'customs', 'transport', 'fleet', 'expenses') + _v('inventory', 'procurement', 'sales', 'reports', 'costing') + ['approvals.decide'],
+    'STORE_MANAGER': _e('inventory') + _v('procurement', 'shipments') + ['inventory.adjust'],
+    'CASHIER': _e('payments') + _v('customers', 'finance'),
+    'INTERNAL_AUDITOR': [p for p in ALL_PERMS if p.endswith('.view')],
+    'READONLY_MANAGER': _v('suppliers', 'procurement', 'inventory', 'customers', 'sales', 'fleet', 'transport', 'shipments', 'reports'),
+}
+ROLE_NAMES = {'GROUP_ADMIN': 'Group Administrator', 'MD': 'Managing Director', 'KE_FINANCE_MANAGER': 'Kenya Finance Manager',
+              'DRC_FINANCE_MANAGER': 'DRC Finance Manager', 'ACCOUNTANT': 'Accountant', 'PROCUREMENT_MANAGER': 'Procurement Manager',
+              'PROCUREMENT_OFFICER': 'Procurement Officer', 'SALES_MANAGER': 'Sales Manager', 'SALES_OFFICER': 'Sales Officer',
+              'FLEET_MANAGER': 'Fleet Manager', 'LOGISTICS_MANAGER': 'Logistics Manager', 'STORE_MANAGER': 'Store Manager',
+              'CASHIER': 'Cashier', 'INTERNAL_AUDITOR': 'Internal Auditor', 'READONLY_MANAGER': 'Read-only Manager'}
+
+
+def seed_roles():
+    for code in ALL_PERMS:
+        Permission.objects.get_or_create(code=code)
+    for code, perms in ROLE_PERMISSIONS.items():
+        role, _ = Role.objects.get_or_create(code=code, defaults={'name': ROLE_NAMES[code]})
+        role.permissions.set(Permission.objects.filter(code__in=set(perms)))
