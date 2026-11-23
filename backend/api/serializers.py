@@ -451,3 +451,22 @@ class VehicleExpenseIn(serializers.Serializer):
     bank_account = serializers.PrimaryKeyRelatedField(queryset=m.BankAccount.objects.all(), required=False, allow_null=True)
     receipt_no = serializers.CharField(required=False, allow_blank=True)
     description = serializers.CharField(required=False, allow_blank=True)
+
+
+class LoadingLineIn(serializers.Serializer):
+    id = serializers.IntegerField()
+    loaded_quantity = serializers.DecimalField(max_digits=18, decimal_places=3)
+    tank = serializers.PrimaryKeyRelatedField(queryset=m.StorageTank.objects.all(), required=False)
+    compartment = serializers.CharField(required=False, allow_blank=True)
+
+
+class LoadingIn(serializers.Serializer):
+    lines = LoadingLineIn(many=True)
+    loading_date = serializers.DateField(required=False)
+
+
+class TripDataIn(serializers.Serializer):
+    distance_km = serializers.DecimalField(max_digits=18, decimal_places=3, required=False)
+    fuel_issued_litres = serializers.DecimalField(max_digits=18, decimal_places=3, required=False)
+    fuel_used_litres = serializers.DecimalField(max_digits=18, decimal_places=3, required=False)
+    expected_delivery = serializers.DateTimeField(required=False)
