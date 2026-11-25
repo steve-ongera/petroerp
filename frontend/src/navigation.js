@@ -1,313 +1,193 @@
 /**
- * PetroERP - application shell (single file).
+ * Navigation registry.
  *
- *  - Every page is imported explicitly with lazy(), so each one is code-split and its
- *    code is only downloaded when someone opens it.
- *  - Every route is written out explicitly in <Routes> (no generated routes), grouped by module.
- *  - <RequireAuth> sends anonymous users to /login.
- *  - <Guarded perm="..."> = permission check -> error boundary -> Suspense -> page.
- *    These guards are UX only: the API enforces permissions and legal-entity access on every request.
- *  - <AppLayout> renders Sidebar + Navbar + <Outlet/> + toasts.
- *  - navigation.js is still used by the Sidebar, firstAllowedPath() and titleFor().
- *    When you add a page: (1) add the lazy import, (2) add the <Route>, (3) add it to navigation.js
- *    if it should appear in the menu / get a tab title.
+ * Exports:
+ *   visibleNav(can)       → tree for Sidebar.jsx
+ *   flatNav(can)          → flat list for Navbar.jsx search
+ *   allRoutes()           → [{ path, perm, page }] for App.jsx router
+ *   firstAllowedPath(can) → first page the user can open (<Home/>)
+ *   titleFor(pathname)    → page title for document.title
+ *
+ * Pure data + helpers. No JSX.
  */
-import { Component, Suspense, lazy, useEffect, useState } from 'react';
-import { BrowserRouter, Link, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 
-import AppLayout from './components/AppLayout';
-import { AppProvider, useAuth } from './context/AppContext';
-import { firstAllowedPath, titleFor } from './navigation';
-import { errorMessage } from './services/api';
-import './styles/main.css';
+export const ICON_KEYS = {
+  dashboard: 'dashboard',
+  admin: 'settings',
+  procurement: 'cart',
+  inventory: 'tank',
+  sales: 'sales',
+  logistics: 'truck',
+  finance: 'finance',
+  group: 'group',
+  reports: 'report',
+  ai: 'ai',
+};
 
-// ---------------------------------------------------------------------------
-// PAGES - all lazy-loaded
-// ---------------------------------------------------------------------------
+const NAV = [
+  { label: 'Dashboard', path: '/dashboard', icon: ICON_KEYS.dashboard, perm: 'reports.view', page: 'dashboard/Dashboard' },
 
-// auth & personal
-const Login = lazy(() => import('./pages/auth/Login'));
-const Profile = lazy(() => import('./pages/auth/Profile'));
-const Approvals = lazy(() => import('./pages/admin/Approvals'));
-const Notifications = lazy(() => import('./pages/admin/Notifications'));
+  { group: 'Administration', icon: ICON_KEYS.admin, items: [
+    { label: 'Companies',        path: '/admin/companies',        perm: 'company.view', page: 'admin/Companies' },
+    { label: 'Structure',        path: '/admin/structure',        perm: 'company.view', page: 'admin/Structure' },
+    { label: 'Fiscal years',     path: '/admin/fiscal-years',     perm: 'finance.view', page: 'admin/FiscalYears' },
+    { label: 'Taxes',            path: '/admin/taxes',            perm: 'company.view', page: 'admin/TaxConfigs' },
+    { label: 'Currencies',       path: '/admin/currencies',       perm: 'company.view', page: 'admin/Currencies' },
+    { label: 'Account mappings', path: '/admin/account-mappings', perm: 'finance.view', page: 'admin/AccountMappings' },
+    { label: 'Policies',         path: '/admin/policies',         perm: 'company.view', page: 'admin/Policies' },
+    { label: 'Users',            path: '/admin/users',            perm: 'admin.view',   page: 'admin/Users' },
+    { label: 'Audit log',        path: '/admin/audit',            perm: 'audit.view',   page: 'admin/AuditLog' },
+  ]},
 
-// dashboard
-const Dashboard = lazy(() => import('./pages/dashboard/Dashboard'));
+  { group: 'Procurement', icon: ICON_KEYS.procurement, items: [
+    { label: 'Suppliers',         path: '/procurement/suppliers',       perm: 'suppliers.view',   page: 'procurement/Suppliers' },
+    { label: 'Contracts',         path: '/procurement/contracts',       perm: 'suppliers.view',   page: 'procurement/Contracts' },
+    { label: 'Requisitions',      path: '/procurement/requisitions',    perm: 'procurement.view', page: 'procurement/Requisitions' },
+    { label: 'Purchase orders',   path: '/procurement/purchase-orders', perm: 'procurement.view', page: 'procurement/PurchaseOrders' },
+    { label: 'Goods receipts',    path: '/procurement/receipts',        perm: 'inventory.view',   page: 'procurement/GoodsReceipts' },
+    { label: 'Purchase invoices', path: '/procurement/invoices',        perm: 'procurement.view', page: 'procurement/PurchaseInvoices' },
+    { label: 'Returns',           path: '/procurement/returns',         perm: 'procurement.view', page: 'procurement/Returns' },
+  ]},
 
-// administration
-const AdminCompanies = lazy(() => import('./pages/admin/Companies'));
-const AdminStructure = lazy(() => import('./pages/admin/Structure'));
-const AdminFiscalYears = lazy(() => import('./pages/admin/FiscalYears'));
-const AdminTaxConfigs = lazy(() => import('./pages/admin/TaxConfigs'));
-const AdminCurrencies = lazy(() => import('./pages/admin/Currencies'));
-const AdminAccountMappings = lazy(() => import('./pages/admin/AccountMappings'));
-const AdminPolicies = lazy(() => import('./pages/admin/Policies'));
-const AdminUsers = lazy(() => import('./pages/admin/Users'));
-const AdminAuditLog = lazy(() => import('./pages/admin/AuditLog'));
+  { group: 'Inventory', icon: ICON_KEYS.inventory, items: [
+    { label: 'Products',       path: '/inventory/products',       perm: 'inventory.view', page: 'inventory/Products' },
+    { label: 'Tanks & depots', path: '/inventory/tanks',          perm: 'inventory.view', page: 'inventory/Tanks' },
+    { label: 'Stock',          path: '/inventory/stock',          perm: 'inventory.view', page: 'inventory/Stock' },
+    { label: 'Adjustments',    path: '/inventory/adjustments',    perm: 'inventory.view', page: 'inventory/Adjustments' },
+    { label: 'Reconciliation', path: '/inventory/reconciliation', perm: 'inventory.view', page: 'inventory/Reconciliation' },
+  ]},
 
-// procurement
-const ProcSuppliers = lazy(() => import('./pages/procurement/Suppliers'));
-const ProcSupplierDetail = lazy(() => import('./pages/procurement/SupplierDetail'));
-const ProcContracts = lazy(() => import('./pages/procurement/Contracts'));
-const ProcRequisitions = lazy(() => import('./pages/procurement/Requisitions'));
-const ProcPurchaseOrders = lazy(() => import('./pages/procurement/PurchaseOrders'));
-const ProcPurchaseOrderDetail = lazy(() => import('./pages/procurement/PurchaseOrderDetail'));
-const ProcGoodsReceipts = lazy(() => import('./pages/procurement/GoodsReceipts'));
-const ProcPurchaseInvoices = lazy(() => import('./pages/procurement/PurchaseInvoices'));
-const ProcReturns = lazy(() => import('./pages/procurement/Returns'));
+  { group: 'Sales', icon: ICON_KEYS.sales, items: [
+    { label: 'Customers',      path: '/sales/customers',    perm: 'customers.view', page: 'sales/Customers' },
+    { label: 'Contracts',      path: '/sales/contracts',    perm: 'sales.view',     page: 'sales/Contracts' },
+    { label: 'Pricing',        path: '/sales/pricing',      perm: 'sales.view',     page: 'sales/Pricing' },
+    { label: 'Sales orders',   path: '/sales/orders',       perm: 'sales.view',     page: 'sales/SalesOrders' },
+    { label: 'Sales invoices', path: '/sales/invoices',     perm: 'sales.view',     page: 'sales/SalesInvoices' },
+    { label: 'Credit notes',   path: '/sales/credit-notes', perm: 'sales.view',     page: 'sales/CreditNotes' },
+  ]},
 
-// inventory
-const InvProducts = lazy(() => import('./pages/inventory/Products'));
-const InvTanks = lazy(() => import('./pages/inventory/Tanks'));
-const InvReconciliation = lazy(() => import('./pages/inventory/Reconciliation'));
-const InvStock = lazy(() => import('./pages/inventory/Stock'));
-const InvAdjustments = lazy(() => import('./pages/inventory/Adjustments'));
+  { group: 'Logistics', icon: ICON_KEYS.logistics, items: [
+    { label: 'Shipments',            path: '/logistics/shipments',            perm: 'shipments.view', page: 'logistics/Shipments' },
+    { label: 'Customs',              path: '/logistics/customs',              perm: 'customs.view',   page: 'logistics/Customs' },
+    { label: 'Vehicles',             path: '/logistics/vehicles',             perm: 'fleet.view',     page: 'logistics/Vehicles' },
+    { label: 'Drivers',              path: '/logistics/drivers',              perm: 'fleet.view',     page: 'logistics/Drivers' },
+    { label: 'Maintenance',          path: '/logistics/maintenance',          perm: 'fleet.view',     page: 'logistics/Maintenance' },
+    { label: 'Transporters',         path: '/logistics/transporters',         perm: 'transport.view', page: 'logistics/Transporters' },
+    { label: 'Bookings',             path: '/logistics/bookings',             perm: 'transport.view', page: 'logistics/Bookings' },
+    { label: 'Transporter invoices', path: '/logistics/transporter-invoices', perm: 'transport.view', page: 'logistics/TransporterInvoices' },
+  ]},
 
-// sales
-const SalesCustomers = lazy(() => import('./pages/sales/Customers'));
-const SalesCustomerDetail = lazy(() => import('./pages/sales/CustomerDetail'));
-const SalesContracts = lazy(() => import('./pages/sales/Contracts'));
-const SalesPricing = lazy(() => import('./pages/sales/Pricing'));
-const SalesOrders = lazy(() => import('./pages/sales/SalesOrders'));
-const SalesOrderDetail = lazy(() => import('./pages/sales/SalesOrderDetail'));
-const SalesInvoices = lazy(() => import('./pages/sales/SalesInvoices'));
-const SalesInvoiceDetail = lazy(() => import('./pages/sales/SalesInvoiceDetail'));
-const SalesCreditNotes = lazy(() => import('./pages/sales/CreditNotes'));
+  { group: 'Finance', icon: ICON_KEYS.finance, items: [
+    { label: 'Expenses',     path: '/finance/expenses', perm: 'expenses.view', page: 'finance/Expenses' },
+    { label: 'Payments',     path: '/finance/payments', perm: 'payments.view', page: 'finance/Payments' },
+    { label: 'Bank',         path: '/finance/bank',     perm: 'payments.view', page: 'finance/Bank' },
+    { label: 'Accounts',     path: '/finance/accounts', perm: 'finance.view',  page: 'finance/Accounts' },
+    { label: 'Journals',     path: '/finance/journals', perm: 'finance.view',  page: 'finance/Journals' },
+    { label: 'Fixed assets', path: '/finance/assets',   perm: 'assets.view',   page: 'finance/FixedAssets' },
+    { label: 'Payroll',      path: '/finance/payroll',  perm: 'hr.view',       page: 'finance/Payroll' },
+  ]},
 
-// logistics
-const LogShipments = lazy(() => import('./pages/logistics/Shipments'));
-const LogShipmentDetail = lazy(() => import('./pages/logistics/ShipmentDetail'));
-const LogCustoms = lazy(() => import('./pages/logistics/Customs'));
-const LogVehicles = lazy(() => import('./pages/logistics/Vehicles'));
-const LogDrivers = lazy(() => import('./pages/logistics/Drivers'));
-const LogMaintenance = lazy(() => import('./pages/logistics/Maintenance'));
-const LogTransporters = lazy(() => import('./pages/logistics/Transporters'));
-const LogBookings = lazy(() => import('./pages/logistics/Bookings'));
-const LogTransporterInvoices = lazy(() => import('./pages/logistics/TransporterInvoices'));
+  { group: 'Group', icon: ICON_KEYS.group, items: [
+    { label: 'Intercompany',   path: '/group/intercompany',  perm: 'group.view', page: 'group/Intercompany' },
+    { label: 'Consolidation',  path: '/group/consolidation', perm: 'group.view', page: 'group/Consolidation' },
+    { label: 'FX revaluation', path: '/group/fx',            perm: 'finance.close_period', page: 'group/FxRevaluation' },
+  ]},
 
-// finance
-const FinExpenses = lazy(() => import('./pages/finance/Expenses'));
-const FinPayments = lazy(() => import('./pages/finance/Payments'));
-const FinBank = lazy(() => import('./pages/finance/Bank'));
-const FinAccounts = lazy(() => import('./pages/finance/Accounts'));
-const FinJournals = lazy(() => import('./pages/finance/Journals'));
-const FinFixedAssets = lazy(() => import('./pages/finance/FixedAssets'));
-const FinPayroll = lazy(() => import('./pages/finance/Payroll'));
+  { group: 'Intelligence', icon: ICON_KEYS.reports, items: [
+    { label: 'Reports',      path: '/reports', perm: 'reports.view', page: 'reports/Reports' },
+    { label: 'AI assistant', path: '/ai',      perm: 'ai.view',      page: 'ai/Assistant' },
+  ]},
 
-// group
-const GrpIntercompany = lazy(() => import('./pages/group/Intercompany'));
-const GrpConsolidation = lazy(() => import('./pages/group/Consolidation'));
-const GrpFxRevaluation = lazy(() => import('./pages/group/FxRevaluation'));
-
-// reports & AI
-const Reports = lazy(() => import('./pages/reports/Reports'));
-const AiAssistant = lazy(() => import('./pages/ai/Assistant'));
-
-// ---------------------------------------------------------------------------
-// Small state screens
-// ---------------------------------------------------------------------------
-const center = { display: 'grid', placeItems: 'center', minHeight: '60vh', padding: 24, textAlign: 'center' };
-
-function Loader({ label = 'Loading…' }) {
-  return <div className="state-screen" style={center} role="status" aria-live="polite">{label}</div>;
-}
-
-function Forbidden({ perm }) {
-  return (
-    <div className="state-card" style={center}>
-      <div>
-        <h2>No access</h2>
-        <p>Your role does not include <code>{perm}</code>. Ask a Group Administrator if you need it.</p>
-        <Link to="/">Back to home</Link>
-      </div>
-    </div>
-  );
-}
-
-function NotFound() {
-  return (
-    <div className="state-card" style={center}>
-      <div><h2>Page not found</h2><Link to="/">Back to home</Link></div>
-    </div>
-  );
-}
-
-/** Catches render errors in a page so one broken screen never blanks the whole app. */
-class ErrorBoundary extends Component {
-  state = { error: null };
-  static getDerivedStateFromError(error) { return { error }; }
-  componentDidCatch(error, info) { console.error('Page error:', error, info.componentStack); }
-  render() {
-    if (!this.state.error) return this.props.children;
-    return (
-      <div className="state-card" style={center} role="alert">
-        <div>
-          <h2>Something went wrong on this page</h2>
-          <p>{errorMessage(this.state.error)}</p>
-          <button type="button" className="btn" onClick={() => this.setState({ error: null })}>Try again</button>
-        </div>
-      </div>
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Guards
-// ---------------------------------------------------------------------------
-function RequireAuth({ children }) {
-  const { status } = useAuth();
-  const location = useLocation();
-  if (status === 'loading') return <Loader label="Restoring your session…" />;
-  if (status !== 'authed') return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
-  return children;
-}
-
-/** Keeps the browser tab title in step with the current route. */
-function TitleSync() {
-  const { pathname } = useLocation();
-  useEffect(() => { document.title = `${titleFor(pathname)} · PetroERP`; }, [pathname]);
-  return null;
-}
+  { label: 'Approvals',     path: '/approvals',     icon: 'check', perm: null, page: 'admin/Approvals' },
+  { label: 'Notifications', path: '/notifications', icon: 'bell',  perm: null, page: 'admin/Notifications' },
+  { label: 'Profile',       path: '/profile',       icon: 'user',  perm: null, page: 'auth/Profile' },
+];
 
 /**
- * perm  - the server permission string for the page (e.g. 'sales.view').
- *         Omit / null = any signed-in user.
- * Order: permission check -> error boundary (reset on navigation) -> Suspense -> page.
+ * Detail routes (not in the sidebar, but need a permission + page key).
+ * Update these when you add new detail pages in App.jsx / navigation.js.
  */
-function Guarded({ perm = null, children }) {
-  const { can } = useAuth();
-  const { pathname } = useLocation();
-  if (perm && !can(perm)) return <Forbidden perm={perm} />;
-  return (
-    <ErrorBoundary key={pathname}>
-      <Suspense fallback={<Loader />}>
-        <TitleSync />
-        {children}
-      </Suspense>
-    </ErrorBoundary>
-  );
+const DETAIL_ROUTES = [
+  { path: '/procurement/suppliers/:id',        perm: 'suppliers.view',   page: 'procurement/SupplierDetail' },
+  { path: '/procurement/purchase-orders/:id',  perm: 'procurement.view', page: 'procurement/PurchaseOrderDetail' },
+  { path: '/sales/customers/:id',              perm: 'customers.view',   page: 'sales/CustomerDetail' },
+  { path: '/sales/orders/:id',                 perm: 'sales.view',       page: 'sales/SalesOrderDetail' },
+  { path: '/sales/invoices/:id',               perm: 'sales.view',       page: 'sales/SalesInvoiceDetail' },
+  { path: '/logistics/shipments/:id',          perm: 'shipments.view',   page: 'logistics/ShipmentDetail' },
+];
+
+/* ------------------------------------------------------------------ helpers */
+
+const can = (canFn, perm) => !perm || (typeof canFn === 'function' && canFn(perm));
+
+export function visibleNav(canFn) {
+  const out = [];
+  for (const node of NAV) {
+    if (node.group) {
+      const items = node.items.filter((i) => can(canFn, i.perm));
+      if (items.length) out.push({ group: node.group, icon: node.icon, items });
+    } else if (can(canFn, node.perm)) {
+      out.push({ label: node.label, path: node.path, icon: node.icon });
+    }
+  }
+  return out;
 }
 
-function Home() {
-  const { can } = useAuth();
-  return <Navigate to={firstAllowedPath(can)} replace />;
+export function flatNav(canFn) {
+  const rows = [];
+  for (const node of NAV) {
+    if (node.group) {
+      for (const it of node.items) {
+        if (can(canFn, it.perm)) rows.push({ label: it.label, path: it.path, perm: it.perm || null });
+      }
+    } else if (can(canFn, node.perm)) {
+      rows.push({ label: node.label, path: node.path, perm: node.perm || null });
+    }
+  }
+  return rows;
 }
 
-function LoginRoute() {
-  const { status, can } = useAuth();
-  const location = useLocation();
-  if (status === 'loading') return <Loader label="Restoring your session…" />;
-  if (status === 'authed') return <Navigate to={location.state?.from || firstAllowedPath(can)} replace />;
-  return (
-    <Suspense fallback={<Loader />}>
-      <ErrorBoundary><Login /></ErrorBoundary>
-    </Suspense>
-  );
+/** Route table consumed by App.jsx (<Route> generator). */
+export function allRoutes() {
+  const rows = [];
+  for (const node of NAV) {
+    if (node.group) {
+      for (const it of node.items) rows.push({ path: it.path, perm: it.perm, page: it.page });
+    } else {
+      rows.push({ path: node.path, perm: node.perm, page: node.page });
+    }
+  }
+  for (const r of DETAIL_ROUTES) rows.push(r);
+  return rows;
 }
 
-// ---------------------------------------------------------------------------
-// Routes
-// ---------------------------------------------------------------------------
-function AppRoutes() {
-  return (
-    <Routes>
-      {/* public */}
-      <Route path="/login" element={<LoginRoute />} />
-
-      {/* everything inside the app shell requires a signed-in user */}
-      <Route element={<RequireAuth><AppLayout><Outlet /></AppLayout></RequireAuth>}>
-        <Route index element={<Home />} />
-
-        {/* ---- personal pages: any signed-in user ---- */}
-        <Route path="/approvals" element={<Guarded><Approvals /></Guarded>} />
-        <Route path="/notifications" element={<Guarded><Notifications /></Guarded>} />
-        <Route path="/profile" element={<Guarded><Profile /></Guarded>} />
-
-        {/* ---- dashboard ---- */}
-        <Route path="/dashboard" element={<Guarded perm="reports.view"><Dashboard /></Guarded>} />
-
-        {/* ---- administration ---- */}
-        <Route path="/admin/companies" element={<Guarded perm="company.view"><AdminCompanies /></Guarded>} />
-        <Route path="/admin/structure" element={<Guarded perm="company.view"><AdminStructure /></Guarded>} />
-        <Route path="/admin/fiscal-years" element={<Guarded perm="finance.view"><AdminFiscalYears /></Guarded>} />
-        <Route path="/admin/taxes" element={<Guarded perm="company.view"><AdminTaxConfigs /></Guarded>} />
-        <Route path="/admin/currencies" element={<Guarded perm="company.view"><AdminCurrencies /></Guarded>} />
-        <Route path="/admin/account-mappings" element={<Guarded perm="finance.view"><AdminAccountMappings /></Guarded>} />
-        <Route path="/admin/policies" element={<Guarded perm="company.view"><AdminPolicies /></Guarded>} />
-        <Route path="/admin/users" element={<Guarded perm="admin.view"><AdminUsers /></Guarded>} />
-        <Route path="/admin/audit" element={<Guarded perm="audit.view"><AdminAuditLog /></Guarded>} />
-
-        {/* ---- procurement ---- */}
-        <Route path="/procurement/suppliers" element={<Guarded perm="suppliers.view"><ProcSuppliers /></Guarded>} />
-        <Route path="/procurement/suppliers/:id" element={<Guarded perm="suppliers.view"><ProcSupplierDetail /></Guarded>} />
-        <Route path="/procurement/contracts" element={<Guarded perm="suppliers.view"><ProcContracts /></Guarded>} />
-        <Route path="/procurement/requisitions" element={<Guarded perm="procurement.view"><ProcRequisitions /></Guarded>} />
-        <Route path="/procurement/purchase-orders" element={<Guarded perm="procurement.view"><ProcPurchaseOrders /></Guarded>} />
-        <Route path="/procurement/purchase-orders/:id" element={<Guarded perm="procurement.view"><ProcPurchaseOrderDetail /></Guarded>} />
-        <Route path="/procurement/receipts" element={<Guarded perm="inventory.view"><ProcGoodsReceipts /></Guarded>} />
-        <Route path="/procurement/invoices" element={<Guarded perm="procurement.view"><ProcPurchaseInvoices /></Guarded>} />
-        <Route path="/procurement/returns" element={<Guarded perm="procurement.view"><ProcReturns /></Guarded>} />
-
-        {/* ---- inventory ---- */}
-        <Route path="/inventory/products" element={<Guarded perm="inventory.view"><InvProducts /></Guarded>} />
-        <Route path="/inventory/tanks" element={<Guarded perm="inventory.view"><InvTanks /></Guarded>} />
-        <Route path="/inventory/reconciliation" element={<Guarded perm="inventory.view"><InvReconciliation /></Guarded>} />
-        <Route path="/inventory/stock" element={<Guarded perm="inventory.view"><InvStock /></Guarded>} />
-        <Route path="/inventory/adjustments" element={<Guarded perm="inventory.view"><InvAdjustments /></Guarded>} />
-
-        {/* ---- sales ---- */}
-        <Route path="/sales/customers" element={<Guarded perm="customers.view"><SalesCustomers /></Guarded>} />
-        <Route path="/sales/customers/:id" element={<Guarded perm="customers.view"><SalesCustomerDetail /></Guarded>} />
-        <Route path="/sales/contracts" element={<Guarded perm="sales.view"><SalesContracts /></Guarded>} />
-        <Route path="/sales/pricing" element={<Guarded perm="sales.view"><SalesPricing /></Guarded>} />
-        <Route path="/sales/orders" element={<Guarded perm="sales.view"><SalesOrders /></Guarded>} />
-        <Route path="/sales/orders/:id" element={<Guarded perm="sales.view"><SalesOrderDetail /></Guarded>} />
-        <Route path="/sales/invoices" element={<Guarded perm="sales.view"><SalesInvoices /></Guarded>} />
-        <Route path="/sales/invoices/:id" element={<Guarded perm="sales.view"><SalesInvoiceDetail /></Guarded>} />
-        <Route path="/sales/credit-notes" element={<Guarded perm="sales.view"><SalesCreditNotes /></Guarded>} />
-
-        {/* ---- logistics ---- */}
-        <Route path="/logistics/shipments" element={<Guarded perm="shipments.view"><LogShipments /></Guarded>} />
-        <Route path="/logistics/shipments/:id" element={<Guarded perm="shipments.view"><LogShipmentDetail /></Guarded>} />
-        <Route path="/logistics/customs" element={<Guarded perm="customs.view"><LogCustoms /></Guarded>} />
-        <Route path="/logistics/vehicles" element={<Guarded perm="fleet.view"><LogVehicles /></Guarded>} />
-        <Route path="/logistics/drivers" element={<Guarded perm="fleet.view"><LogDrivers /></Guarded>} />
-        <Route path="/logistics/maintenance" element={<Guarded perm="fleet.view"><LogMaintenance /></Guarded>} />
-        <Route path="/logistics/transporters" element={<Guarded perm="transport.view"><LogTransporters /></Guarded>} />
-        <Route path="/logistics/bookings" element={<Guarded perm="transport.view"><LogBookings /></Guarded>} />
-        <Route path="/logistics/transporter-invoices" element={<Guarded perm="transport.view"><LogTransporterInvoices /></Guarded>} />
-
-        {/* ---- finance ---- */}
-        <Route path="/finance/expenses" element={<Guarded perm="expenses.view"><FinExpenses /></Guarded>} />
-        <Route path="/finance/payments" element={<Guarded perm="payments.view"><FinPayments /></Guarded>} />
-        <Route path="/finance/bank" element={<Guarded perm="payments.view"><FinBank /></Guarded>} />
-        <Route path="/finance/accounts" element={<Guarded perm="finance.view"><FinAccounts /></Guarded>} />
-        <Route path="/finance/journals" element={<Guarded perm="finance.view"><FinJournals /></Guarded>} />
-        <Route path="/finance/assets" element={<Guarded perm="assets.view"><FinFixedAssets /></Guarded>} />
-        <Route path="/finance/payroll" element={<Guarded perm="hr.view"><FinPayroll /></Guarded>} />
-
-        {/* ---- group ---- */}
-        <Route path="/group/intercompany" element={<Guarded perm="group.view"><GrpIntercompany /></Guarded>} />
-        <Route path="/group/consolidation" element={<Guarded perm="group.view"><GrpConsolidation /></Guarded>} />
-        <Route path="/group/fx" element={<Guarded perm="finance.close_period"><GrpFxRevaluation /></Guarded>} />
-
-        {/* ---- reports & AI ---- */}
-        <Route path="/reports" element={<Guarded perm="reports.view"><Reports /></Guarded>} />
-        <Route path="/ai" element={<Guarded perm="ai.view"><AiAssistant /></Guarded>} />
-
-        {/* unknown path inside the shell: 404 with sidebar/navbar still visible */}
-        <Route path="*" element={<Guarded><NotFound /></Guarded>} />
-      </Route>
-    </Routes>
-  );
+export function firstAllowedPath(canFn) {
+  for (const node of NAV) {
+    if (node.group) {
+      for (const it of node.items) if (can(canFn, it.perm)) return it.path;
+    } else if (can(canFn, node.perm)) {
+      return node.path;
+    }
+  }
+  return '/profile';
 }
 
-export default function App() {
-  return (
-    <BrowserRouter>
-      <AppProvider>
-        <AppRoutes />
-      </AppProvider>
-    </BrowserRouter>
-  );
+export function titleFor(pathname) {
+  for (const node of NAV) {
+    if (node.group) {
+      const hit = node.items.find((i) => i.path === pathname);
+      if (hit) return hit.label;
+    } else if (node.path === pathname) {
+      return node.label;
+    }
+  }
+  for (const r of DETAIL_ROUTES) {
+    const re = new RegExp('^' + r.path.replace(/:[^/]+/g, '[^/]+') + '$');
+    if (re.test(pathname)) {
+      // Title from path segment, e.g. ".../:id" → "Supplier"
+      const base = r.path.replace(/:\w+/g, '').replace(/\/+$/, '').split('/').pop() || '';
+      return base.charAt(0).toUpperCase() + base.slice(1);
+    }
+  }
+  return pathname;
 }

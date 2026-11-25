@@ -5,6 +5,7 @@
  *  - Pages live in src/pages/<group>/<Name>.jsx and are code-split automatically (import.meta.glob). A page that has
  *    not been written yet shows a "not built" placeholder instead of breaking the build - add pages one group at a time.
  *  - <RequireAuth> sends anonymous users to /login; <Guard perm="..."> shows "no access" for pages the role cannot use.
+ *    The Group Administrator / super user (is_superuser or role GROUP_ADMIN) passes every guard, exactly like the API.
  *    These guards are UX only: the API enforces permissions and legal-entity access on every request.
  *  - <AppLayout> (components/AppLayout.jsx) renders Sidebar + Navbar + <Outlet/> + toasts.
  */
@@ -15,6 +16,7 @@ import AppLayout from './components/AppLayout';
 import { AppProvider, useAuth } from './context/AppContext';
 import { allRoutes, firstAllowedPath, titleFor } from './navigation';
 import { errorMessage } from './services/api';
+import { useAccess } from './utils/access';
 import './styles/main.css';
 
 // ------------------------------------------------------------------ lazy page registry
@@ -95,8 +97,9 @@ function RequireAuth({ children }) {
   return children;
 }
 
+/** Super user / Group Administrator passes every guard (see utils/access.js). */
 function Guard({ perm, children }) {
-  const { can } = useAuth();
+  const { can } = useAccess();
   return can(perm) ? children : <Forbidden perm={perm} />;
 }
 
@@ -115,7 +118,7 @@ function Page({ pageKey }) {
 }
 
 function Home() {
-  const { can } = useAuth();
+  const { can } = useAccess();
   return <Navigate to={firstAllowedPath(can)} replace />;
 }
 
@@ -158,7 +161,7 @@ function FallbackLogin() {
 }
 
 function LoginRoute() {
-  const { status, can } = useAuth();
+  const { status, can } = useAccess();
   const location = useLocation();
   if (status === 'loading') return <Loader label="Restoring your session…" />;
   if (status === 'authed') return <Navigate to={location.state?.from || firstAllowedPath(can)} replace />;

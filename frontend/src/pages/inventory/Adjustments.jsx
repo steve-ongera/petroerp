@@ -7,12 +7,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import api, { errorMessage } from '../../services/api';
+import Pagination, { usePagination } from '../../components/Pagination';
+import TableSkeleton from '../../components/TableSkeleton';
 
 const fmtMoney = (n) => {
   if (n == null || n === '') return '—';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
+const adjPill = (s) =>
+  s === 'APPROVED' ? 'status-pill--success' : s === 'REJECTED' ? 'status-pill--danger' : 'status-pill--warning';
 
 export default function Adjustments() {
   const { companyParams, activeCompanyObj } = useApp();
@@ -36,99 +40,134 @@ export default function Adjustments() {
 
   useEffect(() => { load(); }, [load]);
 
-  return (
-    <div className="app-content">
-      <header className="page-header">
-        <div className="page-header__main">
-          <h1 className="page-header__title">Adjustments & transfers</h1>
-          <p className="page-header__subtitle">
-            Stock adjustments and inter-tank transfers{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
-          </p>
-        </div>
-      </header>
+  const activeRows = tab === 'adjustments' ? adjustments : transfers;
+  const { pageRows, paginationProps } = usePagination(activeRows);
 
-      <div className="tabs">
-        <button className={`tab ${tab === 'adjustments' ? 'active' : ''}`} onClick={() => setTab('adjustments')}>
-          Adjustments <span className="tab__count">{adjustments.length}</span>
+  return (
+    <div>
+      {/* ---------- Page header: icon tile + title ---------- */}
+      <div className="page-header">
+        <div className="page-header__lead">
+          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-arrow-left-right"></i></span>
+          <div className="page-header__text">
+            <h1 className="page-title">Adjustments &amp; transfers</h1>
+            <p className="page-subtitle">
+              Stock adjustments and inter-tank transfers{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {error && (
+        <div className="alert alert-danger" role="alert">
+          <span style={{ flex: 1 }}>{error}</span>
+          <button type="button" className="btn btn-sm btn-outline-danger" onClick={load}>Try again</button>
+        </div>
+      )}
+
+      {/* ---------- Tabs sitting on top of the white card ---------- */}
+      <div className="page-tabs" role="tablist">
+        <button type="button" role="tab" aria-selected={tab === 'adjustments'}
+          className={`page-tab${tab === 'adjustments' ? ' is-active' : ''}`} onClick={() => setTab('adjustments')}>
+          <i className="bi bi-sliders"></i> Adjustments <span className="tab__count">{adjustments.length}</span>
         </button>
-        <button className={`tab ${tab === 'transfers' ? 'active' : ''}`} onClick={() => setTab('transfers')}>
-          Transfers <span className="tab__count">{transfers.length}</span>
+        <button type="button" role="tab" aria-selected={tab === 'transfers'}
+          className={`page-tab${tab === 'transfers' ? ' is-active' : ''}`} onClick={() => setTab('transfers')}>
+          <i className="bi bi-arrow-left-right"></i> Transfers <span className="tab__count">{transfers.length}</span>
         </button>
       </div>
 
-      {error ? (
-        <div className="card"><div className="card__body">
-          <p className="field-error" role="alert">{error}</p>
-          <button className="btn mt-2" onClick={load}>Try again</button>
-        </div></div>
-      ) : loading ? (
-        <div className="state-screen">Loading…</div>
-      ) : tab === 'adjustments' ? (
-        <div className="table-card">
-          {!adjustments.length ? (
-            <div className="table-empty">
-              <div className="table-empty__title">No adjustments</div>
-              <div>Raise one from a tank reconciliation.</div>
-            </div>
-          ) : (
-            <div className="table-wrap">
-              <table className="table">
-                <thead><tr>
-                  <th>Reference</th><th>Date</th><th>Tank</th><th>Product</th>
-                  <th className="num">Quantity</th><th className="num">Unit cost</th><th className="num">Value</th>
-                  <th>Reason</th><th>Status</th>
-                </tr></thead>
+      <section className="page-card">
+        <div className="table-wrap__header">
+          <span className="panel-title">
+            <i className={`bi ${tab === 'adjustments' ? 'bi-sliders' : 'bi-arrow-left-right'} text-brand`}></i>
+            {tab === 'adjustments' ? 'Adjustment List' : 'Transfer List'}
+          </span>
+          <span className="chart-card__subtitle">
+            {activeRows.length} {tab === 'adjustments' ? 'adjustment' : 'transfer'}{activeRows.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+
+        {loading ? (
+          <TableSkeleton rows={8} columns={tab === 'adjustments' ? 9 : 7} />
+        ) : activeRows.length === 0 ? (
+          <div className="empty-state">
+            <i className={`bi ${tab === 'adjustments' ? 'bi-sliders' : 'bi-arrow-left-right'}`}></i>
+            <h6>{tab === 'adjustments' ? 'No adjustments' : 'No transfers'}</h6>
+            <p className="text-muted-soft">
+              {tab === 'adjustments' ? 'Raise one from a tank reconciliation.' : 'Use the Stock page to create a transfer.'}
+            </p>
+          </div>
+        ) : tab === 'adjustments' ? (
+          <div className="table-wrap">
+            <div className="table-responsive">
+              <table className="table table-hover mb-0">
+                <thead>
+                  <tr>
+                    <th>Reference</th>
+                    <th>Date</th>
+                    <th>Tank</th>
+                    <th>Product</th>
+                    <th className="text-right">Quantity</th>
+                    <th className="text-right">Unit cost</th>
+                    <th className="text-right">Value</th>
+                    <th>Reason</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
                 <tbody>
-                  {adjustments.map((a) => (
+                  {pageRows.map((a) => (
                     <tr key={a.id}>
-                      <td className="mono">{a.reference}</td>
+                      <td className="cell-mono text-brand fw-600">{a.reference}</td>
                       <td>{a.adjustment_date}</td>
-                      <td className="mono">{a.tank_label || a.tank}</td>
+                      <td className="cell-mono">{a.tank_label || a.tank}</td>
                       <td>{a.product_label || a.product}</td>
-                      <td className="num">{Number(a.quantity).toLocaleString(undefined, { minimumFractionDigits: 3 })}</td>
-                      <td className="num">{Number(a.unit_cost).toFixed(6)}</td>
-                      <td className="num">{fmtMoney(a.value)}</td>
+                      <td className="cell-num">{Number(a.quantity).toLocaleString(undefined, { minimumFractionDigits: 3 })}</td>
+                      <td className="cell-num">{Number(a.unit_cost).toFixed(6)}</td>
+                      <td className="cell-num">{fmtMoney(a.value)}</td>
                       <td className="text-truncate" style={{ maxWidth: 220 }}>{a.reason || '—'}</td>
-                      <td><span className={`status ${a.status === 'APPROVED' ? 'status-active' : a.status === 'REJECTED' ? 'status-rejected' : 'status-pending'}`}>{a.status}</span></td>
+                      <td><span className={`status-pill ${adjPill(a.status)}`}>{a.status}</span></td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          )}
-        </div>
-      ) : (
-        <div className="table-card">
-          {!transfers.length ? (
-            <div className="table-empty">
-              <div className="table-empty__title">No transfers</div>
-              <div>Use the Stock page to create a transfer.</div>
-            </div>
-          ) : (
-            <div className="table-wrap">
-              <table className="table">
-                <thead><tr>
-                  <th>Reference</th><th>Date</th><th>From tank</th><th>To tank</th>
-                  <th className="num">Quantity</th><th>Notes</th><th>Status</th>
-                </tr></thead>
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <div className="table-responsive">
+              <table className="table table-hover mb-0">
+                <thead>
+                  <tr>
+                    <th>Reference</th>
+                    <th>Date</th>
+                    <th>From tank</th>
+                    <th>To tank</th>
+                    <th className="text-right">Quantity</th>
+                    <th>Notes</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
                 <tbody>
-                  {transfers.map((t) => (
+                  {pageRows.map((t) => (
                     <tr key={t.id}>
-                      <td className="mono">{t.reference}</td>
+                      <td className="cell-mono text-brand fw-600">{t.reference}</td>
                       <td>{t.transfer_date}</td>
-                      <td className="mono">{t.from_tank_label || t.from_tank}</td>
-                      <td className="mono">{t.to_tank_label || t.to_tank}</td>
-                      <td className="num">{Number(t.quantity).toLocaleString(undefined, { minimumFractionDigits: 3 })}</td>
+                      <td className="cell-mono">{t.from_tank_label || t.from_tank}</td>
+                      <td className="cell-mono">{t.to_tank_label || t.to_tank}</td>
+                      <td className="cell-num">{Number(t.quantity).toLocaleString(undefined, { minimumFractionDigits: 3 })}</td>
                       <td className="text-truncate" style={{ maxWidth: 240 }}>{t.notes || '—'}</td>
-                      <td><span className="status status-posted">{t.status}</span></td>
+                      <td><span className="status-pill status-pill--success">{t.status}</span></td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        )}
+
+        {!loading && activeRows.length > 0 && <Pagination {...paginationProps} />}
+      </section>
     </div>
   );
 }

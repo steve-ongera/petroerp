@@ -1,56 +1,36 @@
-import { useEffect, useState } from 'react';
+// components/AppLayout.jsx
 import { useLocation } from 'react-router-dom';
 
 import Navbar from './Navbar';
 import Sidebar from './Sidebar';
-
-const KEY = 'petroerp:sidebar-collapsed';
+import { useSidebar } from '../hooks/useSidebar';
 
 /**
  * Shell used by App.jsx:  <AppLayout><Outlet /></AppLayout>
- * Sidebar + Navbar + page content. If your existing AppLayout already renders toasts,
- * keep that part and drop it where marked below.
+ * Sidebar + Navbar + page content, same structure as the school portal:
+ * only .app-shell__main scrolls, so the sidebar and navbar never scroll away.
  */
 export default function AppLayout({ children }) {
   const { pathname } = useLocation();
-  const [collapsed, setCollapsed] = useState(() => {
-    try { return localStorage.getItem(KEY) === '1'; } catch { return false; }
-  });
-  const [mobileOpen, setMobileOpen] = useState(false);
-
-  useEffect(() => {
-    try { localStorage.setItem(KEY, collapsed ? '1' : '0'); } catch { /* storage unavailable */ }
-  }, [collapsed]);
-
-  // close the mobile drawer after every navigation
-  useEffect(() => { setMobileOpen(false); }, [pathname]);
-
-  useEffect(() => {
-    document.body.classList.toggle('modal-open', mobileOpen);
-    return () => document.body.classList.remove('modal-open');
-  }, [mobileOpen]);
+  const { isDesktop, collapsed, mobileOpen, toggleSidebar, closeMobileSidebar } = useSidebar();
 
   return (
-    <div className={`app-shell${collapsed ? ' is-collapsed' : ''}${mobileOpen ? ' is-mobile-open' : ''}`}>
+    <div className="app-shell">
       <a className="skip-link" href="#main">Skip to content</a>
 
       <Sidebar
+        isDesktop={isDesktop}
         collapsed={collapsed}
-        onToggleCollapse={() => setCollapsed((c) => !c)}
-        onNavigate={() => setMobileOpen(false)}
+        mobileOpen={mobileOpen}
+        onClose={closeMobileSidebar}
       />
-      <div className="sidebar-backdrop" onClick={() => setMobileOpen(false)} />
 
-      <div className="app-main">
-        <Navbar
-          collapsed={collapsed}
-          onToggleCollapse={() => setCollapsed((c) => !c)}
-          onOpenMobile={() => setMobileOpen(true)}
-        />
-        <main id="main" className="app-content fade-in" key={pathname}>
+      <div className="app-shell__main">
+        <Navbar onToggleSidebar={toggleSidebar} />
+        <main id="main" className="app-shell__content fade-in" key={pathname}>
           {children}
         </main>
-        {/* keep your existing toast container here, e.g. <Toasts />  (styles: .toast-stack / .toast) */}
+        {/* keep your existing toast container here, e.g. <Toasts />  (styles: .toast-stack / .toast-item) */}
       </div>
     </div>
   );
