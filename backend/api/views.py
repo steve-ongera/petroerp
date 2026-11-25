@@ -1179,6 +1179,7 @@ class ReportView(APIView):
 
 FINANCIAL_CARDS = {'group_revenue', 'revenue_by_country', 'total_purchases', 'operating_expenses', 'gross_profit', 'net_profit',
                    'cash_balance', 'bank_balance', 'mpesa_balance', 'receivables', 'payables'}
+FINANCIAL_CHARTS = {'revenue_trend', 'expense_analysis', 'shipment_profitability'}
 
 
 class DashboardView(APIView):
@@ -1188,9 +1189,11 @@ class DashboardView(APIView):
             raise PermissionDenied()
         f = svc._filters(request.query_params, u)
         data = svc.dashboard_metrics(f, request.query_params.get('period', 'monthly'))
-        if not u.has_perm_code('finance.view'):                      # financial figures are never sent to users without access
+        if not u.has_perm_code('finance.view'):          # financial figures are never sent to users without access
             data['cards'] = {k: v for k, v in data['cards'].items() if k not in FINANCIAL_CARDS}
-            data['charts'] = {}
+            data['charts'] = {k: v for k, v in data['charts'].items() if k not in FINANCIAL_CHARTS}
+            data['summary'] = [r for r in data['summary'] if not r['finance']]
+        data['summary'] = [{k: v for k, v in r.items() if k != 'finance'} for r in data['summary']]
         return Response(data)
 
 

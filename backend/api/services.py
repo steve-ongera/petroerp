@@ -2396,24 +2396,45 @@ REPORTS = {   # name -> (function, permission)
 
 
 # =========================================================== dashboard
+def _month_start(d, back):
+    """First day of the calendar month `back` months before `d`."""
+    y, mth = d.year, d.month - back
+    while mth < 1:
+        mth += 12
+        y -= 1
+    return d.replace(year=y, month=mth, day=1)
+
+
 def dashboard_metrics(f, period='monthly'):
+    """
+    Everything the dashboard page shows, in one payload:
+      cards    : single numbers (financial + operational)
+      charts   : revenue_trend (line), expense_analysis (donut), shipment_profitability (bar), shipment_status (donut fallback)
+      summary  : rows for the summary table (share of revenue is computed here)
+    DashboardView strips the financial parts for users without finance.view.
+    """
     ids, end = f['company_ids'], f['date_to']
-    start = f['date_from'] or {'daily': end, 'weekly': end - timedelta(days=6), 'monthly': end.replace(day=1), 'annual': end.replace(month=1, day=1)}.get(period, end.replace(day=1))
+    start = f['date_from'] or {'daily': end, 'weekly': end - timedelta(days=6), 'monthly': end.replace(day=1),
+                               'annual': end.replace(month=1, day=1)}.get(period, end.replace(day=1))
     rc, missing = _rep_ccy(), set()
+
     def rep(co, amount, d):
         try:
             return q2(amount * _fx_factor(co, d, rc))
         except ValidationError:
             missing.add(f'{co.functional_currency_id}->{rc}')
             return D0
+
     cos = {c.id: c for c in Company.objects.filter(id__in=ids)}
     revenue, by_country, purchases, opex, cogs = D0, defaultdict(lambda: D0), D0, D0, D0
-    for l in SalesInvoiceLine.objects.filter(invoice__company_id__in=ids, invoice__status__in=('POSTED', 'PART_PAID', 'PAID'), invoice__invoice_date__range=(start, end)).select_related('invoice'):
+    for l in SalesInvoiceLine.objects.filter(invoice__company_id__in=ids, invoice__status__in=('POSTED', 'PART_PAID', 'PAID'),
+                                             invoice__invoice_date__range=(start, end)).select_related('invoice'):
         if f['product'] and str(l.product_id) != str(f['product']): continue
         if f['customer'] and str(l.invoice.customer_id) != str(f['customer']): continue
         co = cos[l.invoice.company_id]
         v = rep(co, q2(l.line_total * l.invoice.exchange_rate), end)
-        revenue += v; by_country[co.get_country_display()] += v
+        revenue += v
+        by_country[co.get_country_display()] += v
     for g in GoodsReceipt.objects.filter(company_id__in=ids, receipt_date__range=(start, end)):
         if f['product'] and str(g.line.product_id) != str(f['product']): continue
         purchases += rep(cos[g.company_id], g.total_cost, end)
@@ -2423,43 +2444,99 @@ def dashboard_metrics(f, period='monthly'):
         if a.subtype == 'COGS': cogs += v
         else: opex += v
     gross = revenue - cogs
+    net = gross - opex
+
     def cash_by(sub):
         t = D0
         for co in cos.values():
             t += rep(co, _gl_net_multi(co, sub, end), end)
         return t
-    ar = sum((rep(i.company, q2(i.outstanding * i.exchange_rate), end) for i in SalesInvoice.objects.filter(company_id__in=ids, status__in=('POSTED', 'PART_PAID')).select_related('company')), D0)
-    ap = sum((rep(i.company, q2(i.outstanding * i.exchange_rate), end) for M in (PurchaseInvoice, TransporterInvoice) for i in M.objects.filter(company_id__in=ids, status__in=('POSTED', 'PART_PAID')).select_related('company')), D0)
+
+    cash, bank, mpesa = cash_by('CASH') + cash_by('PETTY'), cash_by('BANK'), cash_by('MPESA')
+    ar = sum((rep(i.company, q2(i.outstanding * i.exchange_rate), end) for i in SalesInvoice.objects.filter(
+        company_id__in=ids, status__in=('POSTED', 'PART_PAID')).select_related('company')), D0)
+    ap = sum((rep(i.company, q2(i.outstanding * i.exchange_rate), end) for M in (PurchaseInvoice, TransporterInvoice)
+             for i in M.objects.filter(company_id__in=ids, status__in=('POSTED', 'PART_PAID')).select_related('company')), D0)
     stock = StockBalance.objects.filter(company_id__in=ids).aggregate(q=Sum('quantity'))['q'] or D0
-    transit = ShipmentLine.objects.filter(shipment__company_id__in=ids, shipment__stock_issued=True, shipment__status__in=ACTIVE_SHIPMENT).aggregate(q=Sum('loaded_quantity'))['q'] or D0
+    transit = ShipmentLine.objects.filter(shipment__company_id__in=ids, shipment__stock_issued=True,
+                                          shipment__status__in=ACTIVE_SHIPMENT).aggregate(q=Sum('loaded_quantity'))['q'] or D0
     sh = Shipment.objects.filter(company_id__in=ids)
     if f['product']: sh = sh.filter(product_id=f['product'])
     if f['customer']: sh = sh.filter(customer_id=f['customer'])
     active = sh.filter(status__in=ACTIVE_SHIPMENT + ('APPROVED', 'AWAITING_LOADING')).count()
     delayed = sh.filter(status__in=ACTIVE_SHIPMENT, expected_delivery__lt=timezone.now()).count()
+    completed = sh.filter(status__in=('DELIVERED', 'RECONCILIATION_PENDING', 'CLOSED')).count()
     fleet = Vehicle.objects.filter(company_id__in=ids).exclude(status='INACTIVE').count()
     on_trip = Vehicle.objects.filter(company_id__in=ids, status='ON_TRIP').count()
+    util = q3(on_trip / fleet * 100) if fleet else D0
+
+    # ---- revenue + margin trend: last 6 calendar months
     months, rev_t, margin_t = [], [], []
     for k in range(5, -1, -1):
-        ms = (end.replace(day=1) - timedelta(days=30 * k)).replace(day=1)
-        me = (ms.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
-        r = sum((rep(cos[l.invoice.company_id], q2(l.line_total * l.invoice.exchange_rate), me) for l in SalesInvoiceLine.objects.filter(invoice__company_id__in=ids, invoice__status__in=('POSTED', 'PART_PAID', 'PAID'), invoice__invoice_date__range=(ms, me)).select_related('invoice')), D0)
-        c = sum((rep(a.company, d - cc, me) for a, (d, cc) in _account_balances(ids, ms, me, ('EXPENSE',), True).items() if a.subtype == 'COGS'), D0)
-        months.append(ms.strftime('%b %Y')); rev_t.append(r); margin_t.append(q3((r - c) / r * 100) if r else D0)
+        ms = _month_start(end, k)
+        me = min((ms.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1), end)
+        r = sum((rep(cos[l.invoice.company_id], q2(l.line_total * l.invoice.exchange_rate), me)
+                 for l in SalesInvoiceLine.objects.filter(
+                     invoice__company_id__in=ids, invoice__status__in=('POSTED', 'PART_PAID', 'PAID'),
+                     invoice__invoice_date__range=(ms, me)).select_related('invoice')), D0)
+        c = sum((rep(a.company, d - cc, me) for a, (d, cc) in _account_balances(ids, ms, me, ('EXPENSE',), True).items()
+                 if a.subtype == 'COGS'), D0)
+        months.append(ms.strftime('%b %Y'))
+        rev_t.append(r)
+        margin_t.append(q3((r - c) / r * 100) if r else D0)
+
+    # ---- expense breakdown
     exp_cat = defaultdict(lambda: D0)
-    for e in Expense.objects.filter(company_id__in=ids, status__in=('POSTED', 'PAID'), expense_date__range=(start, end)).select_related('category', 'company'):
+    for e in Expense.objects.filter(company_id__in=ids, status__in=('POSTED', 'PAID'),
+                                    expense_date__range=(start, end)).select_related('category', 'company'):
         exp_cat[e.category.name] += rep(e.company, e.functional_total, end)
-    sheets = sorted(_latest_sheets(dict(f, date_from=start)), key=lambda s: -s.contribution)[:8]
+
+    # ---- shipment profitability: best 5 plus worst 3 (so losses show up)
+    ranked = sorted(_latest_sheets(dict(f, date_from=start)), key=lambda s: -s.contribution)
+    top = ranked[:5]
+    sheets = top + [s for s in ranked[-3:] if s not in top]
+
+    # ---- shipments by status (operational, not financial)
+    status_rows = sh.exclude(status='CANCELLED').values('status').annotate(n=Count('id')).order_by('-n')
+
+    # ---- summary table rows (share of revenue computed here, not in the browser)
+    def row(group, label, kind, value, finance=True, pct=False):
+        return {'group': group, 'label': label, 'kind': kind, 'value': value, 'finance': finance,
+                'share_pct': q3(value / revenue * 100) if (pct and revenue) else None}
+
+    summary = [
+        row('Income and profit', 'Group revenue', 'money', revenue, pct=True),
+        row('Income and profit', 'Gross profit', 'money', gross, pct=True),
+        row('Income and profit', 'Net profit', 'money', net, pct=True),
+        row('Costs', 'Total purchases', 'money', purchases, pct=True),
+        row('Costs', 'Operating expenses', 'money', opex, pct=True),
+        *[row('Revenue by country', name, 'money', v, pct=True) for name, v in sorted(by_country.items(), key=lambda x: -x[1])],
+        row('Liquidity', 'Cash balance', 'money', cash),
+        row('Liquidity', 'Bank balance', 'money', bank),
+        row('Liquidity', 'M-Pesa balance', 'money', mpesa),
+        row('Working capital', 'Receivables', 'money', ar),
+        row('Working capital', 'Payables', 'money', ap),
+        row('Operations', 'Fuel in stock', 'litres', stock, finance=False),
+        row('Operations', 'Fuel in transit', 'litres', transit, finance=False),
+        row('Operations', 'Active shipments', 'count', active, finance=False),
+        row('Operations', 'Completed shipments', 'count', completed, finance=False),
+        row('Operations', 'Delayed shipments', 'count', delayed, finance=False),
+        row('Operations', 'Fleet utilisation', 'pct', util, finance=False),
+    ]
+
     return {'period': {'from': start, 'to': end, 'granularity': period}, 'currency': rc, 'fx_missing': sorted(missing),
-            'cards': {'group_revenue': revenue, 'revenue_by_country': dict(by_country), 'total_purchases': purchases, 'operating_expenses': opex,
-                      'gross_profit': gross, 'net_profit': gross - opex, 'cash_balance': cash_by('CASH') + cash_by('PETTY'),
-                      'bank_balance': cash_by('BANK'), 'mpesa_balance': cash_by('MPESA'), 'receivables': ar, 'payables': ap,
+            'cards': {'group_revenue': revenue, 'revenue_by_country': dict(by_country), 'total_purchases': purchases,
+                      'operating_expenses': opex, 'gross_profit': gross, 'net_profit': net, 'cash_balance': cash,
+                      'bank_balance': bank, 'mpesa_balance': mpesa, 'receivables': ar, 'payables': ap,
                       'fuel_stock_litres': stock, 'stock_in_transit_litres': transit, 'active_shipments': active,
-                      'completed_shipments': sh.filter(status__in=('DELIVERED', 'RECONCILIATION_PENDING', 'CLOSED')).count(),
-                      'delayed_shipments': delayed, 'fleet_utilization_pct': q3(on_trip / fleet * 100) if fleet else D0},
+                      'completed_shipments': completed, 'delayed_shipments': delayed, 'fleet_utilization_pct': util},
             'charts': {'revenue_trend': {'labels': months, 'revenue': rev_t, 'margin_pct': margin_t},
-                       'expense_analysis': sorted(({'category': k, 'amount': v} for k, v in exp_cat.items()), key=lambda x: -x['amount'])[:10],
-                       'shipment_profitability': [{'shipment': s.shipment.reference, 'contribution': s.contribution, 'margin_pct': s.margin_pct} for s in sheets]}}
+                       'expense_analysis': sorted(({'category': k, 'amount': v} for k, v in exp_cat.items()),
+                                                  key=lambda x: -x['amount'])[:10],
+                       'shipment_profitability': [{'shipment': s.shipment.reference, 'contribution': s.contribution,
+                                                   'margin_pct': s.margin_pct} for s in sheets],
+                       'shipment_status': [{'status': r['status'], 'count': r['n']} for r in status_rows]},
+            'summary': summary}
 
 
 def _gl_net_multi(company, subtype, on_date):

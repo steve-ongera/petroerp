@@ -5,12 +5,18 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
+import { useAccess } from '../../utils/access';
 import api, { errorMessage, fieldErrors } from '../../services/api';
+import Modal from '../../components/Modal';
+import Field from '../../components/Field';
+import Pagination, { usePagination } from '../../components/Pagination';
+import TableSkeleton from '../../components/TableSkeleton';
 
 const TYPES = ['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE'];
-const SUBTYPES = ['', 'CASH', 'BANK', 'MPESA', 'AR', 'AP', 'INVENTORY', 'TRANSIT', 'COGS', 'OPEX', 'IC_RECEIVABLE', 'IC_PAYABLE'];
+const SUBTYPES = ['CASH', 'BANK', 'MPESA', 'PETTY', 'AR', 'AP', 'INVENTORY', 'TRANSIT', 'COGS', 'OPEX', 'IC_RECEIVABLE', 'IC_PAYABLE'];
 
 export default function Accounts() {
+  const { can } = useAccess();
   const { companyParams, activeCompanyObj, notify } = useApp();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -19,14 +25,15 @@ export default function Accounts() {
   const [type, setType] = useState('');
   const [editing, setEditing] = useState(null);
 
+  const canEdit = can('finance.edit');
+
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
       const res = await api.accounts.list({
-        ...companyParams(), ordering: 'code',
+        ...companyParams(), ordering: 'code', page_size: 1000,
         ...(type ? { account_type: type } : {}),
         ...(search ? { search } : {}),
-        page_size: 1000,
       });
       setRows(res?.results || res || []);
     } catch (err) { setError(errorMessage(err)); }
@@ -41,75 +48,150 @@ export default function Accounts() {
     catch (err) { notify(errorMessage(err), 'error'); }
   };
 
+  const hasActiveFilters = !!(search || type);
+  const clearFilters = () => { setSearch(''); setType(''); };
+  const { pageRows, paginationProps } = usePagination(rows);
+
   return (
-    <div className="app-content">
-      <header className="page-header">
-        <div className="page-header__main">
-          <h1 className="page-header__title">Chart of accounts</h1>
-          <p className="page-header__subtitle">
-            {activeCompanyObj ? activeCompanyObj.name : 'All entities'} · {rows.length} account{rows.length === 1 ? '' : 's'}
-          </p>
+    <div>
+      {/* ---------- Page header ---------- */}
+      <div className="page-header">
+        <div className="page-header__lead">
+          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-list-nested"></i></span>
+          <div className="page-header__text">
+            <h1 className="page-title">Chart of accounts</h1>
+            <p className="page-subtitle">
+              {activeCompanyObj ? activeCompanyObj.name : 'All entities'} · {rows.length} account{rows.length !== 1 ? 's' : ''}
+            </p>
+          </div>
         </div>
         <div className="page-header__actions">
-          <button className="btn btn-primary" onClick={() => setEditing({})}>
-            <i className="bi bi-plus-lg" /> New account
-          </button>
+          {canEdit && (
+            <button className="btn btn-primary" onClick={() => setEditing({})}>
+              <i className="bi bi-plus-lg"></i>
+              New account
+            </button>
+          )}
         </div>
-      </header>
+      </div>
 
-      <div className={`table-card ${loading ? 'is-loading' : ''}`}>
-        <div className="filters">
-          <div className="input-group">
-            <span className="input-icon"><i className="bi bi-search" /></span>
-            <input className="input" placeholder="Search code or name…" value={search} onChange={(e) => setSearch(e.target.value)} />
+      {error && (
+        <div className="alert alert-danger" role="alert">
+          <span style={{ flex: 1 }}>{error}</span>
+          <button type="button" className="btn btn-sm btn-outline-danger" onClick={load}>Try again</button>
+        </div>
+      )}
+
+      <section className="page-card">
+        <div className="search-bar">
+          <div className="search-bar__field">
+            <i className="bi bi-search" aria-hidden="true"></i>
+            <input
+              type="text"
+              className="form-control"
+              placeholder="Search by code, name or group..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="Search accounts"
+            />
+            {search && (
+              <button type="button" className="search-bar__clear" onClick={() => setSearch('')} aria-label="Clear search">
+                <i className="bi bi-x-lg"></i>
+              </button>
+            )}
           </div>
-          <select className="select" value={type} onChange={(e) => setType(e.target.value)}>
+          <select className="form-select" value={type} onChange={(e) => setType(e.target.value)} aria-label="Account type">
             <option value="">All types</option>
             {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
+          {hasActiveFilters && (
+            <button className="btn btn-secondary" onClick={clearFilters}>
+              <i className="bi bi-x-lg"></i> Clear
+            </button>
+          )}
         </div>
 
-        {error ? (
-          <div className="card__body">
-            <p className="field-error" role="alert">{error}</p>
-            <button className="btn mt-2" onClick={load}>Try again</button>
-          </div>
-        ) : !rows.length && !loading ? (
-          <div className="table-empty"><div className="table-empty__title">No accounts</div><div>Create the chart of accounts first.</div></div>
-        ) : (
-          <div className="table-wrap">
-            <table className="table">
-              <thead><tr>
-                <th>Code</th><th>Name</th><th>Type</th><th>Subtype</th><th>Group</th>
-                <th>Postable</th><th>Status</th><th className="col-actions" />
-              </tr></thead>
-              <tbody>
-                {rows.map((a) => (
-                  <tr key={a.id}>
-                    <td className="mono">{a.code}</td>
-                    <td>{a.name}</td>
-                    <td><span className="badge">{a.account_type}</span></td>
-                    <td>{a.subtype || '—'}</td>
-                    <td className="mono">{a.group_code || '—'}</td>
-                    <td>
-                      {a.is_postable
-                        ? <span className="badge badge--success">Yes</span>
-                        : <span className="badge">No</span>}
-                    </td>
-                    <td><span className={`status ${a.is_active ? 'status-active' : 'status-inactive'}`}>{a.is_active ? 'Active' : 'Inactive'}</span></td>
-                    <td className="col-actions">
-                      <div className="row-actions">
-                        <button className="row-action" title="Edit" onClick={() => setEditing(a)}><i className="bi bi-pencil" /></button>
-                        <button className="row-action row-action--danger" title="Delete" onClick={() => remove(a)}><i className="bi bi-trash" /></button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {hasActiveFilters && (
+          <div className="chip-row">
+            {search && <span className="filter-chip">Search: "{search}"<button onClick={() => setSearch('')}><i className="bi bi-x"></i></button></span>}
+            {type && <span className="filter-chip">Type: {type}<button onClick={() => setType('')}><i className="bi bi-x"></i></button></span>}
           </div>
         )}
-      </div>
+
+        <div className="table-wrap__header" style={{ borderTop: '1px solid var(--border-color)' }}>
+          <span className="panel-title">
+            <i className="bi bi-list-ul text-brand"></i>
+            Account List
+          </span>
+          <span className="chart-card__subtitle">{rows.length} account{rows.length !== 1 ? 's' : ''}</span>
+        </div>
+
+        {loading ? (
+          <TableSkeleton rows={10} columns={8} />
+        ) : rows.length === 0 ? (
+          <div className="empty-state">
+            <i className="bi bi-list-nested"></i>
+            <h6>{hasActiveFilters ? 'No accounts match your search' : 'No accounts yet'}</h6>
+            <p className="text-muted-soft">
+              {hasActiveFilters ? 'Try adjusting your search or filters' : "Click 'New account' to start your chart of accounts"}
+            </p>
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <div className="table-responsive">
+              <table className="table table-hover mb-0">
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Subtype</th>
+                    <th>Group</th>
+                    <th>Postable</th>
+                    <th>Status</th>
+                    <th className="text-center" style={{ width: '7rem' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageRows.map((a) => (
+                    <tr key={a.id}>
+                      <td className="cell-mono text-brand fw-600">{a.code}</td>
+                      <td className="cell-name">{a.name}</td>
+                      <td><span className="badge badge-neutral">{a.account_type}</span></td>
+                      <td>{a.subtype || '—'}</td>
+                      <td className="cell-mono">{a.group_code || '—'}</td>
+                      <td>
+                        <span className={`status-pill ${a.is_postable ? 'status-pill--success' : 'status-pill--neutral'}`}>
+                          {a.is_postable ? 'YES' : 'NO'}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`status-pill ${a.is_active ? 'status-pill--success' : 'status-pill--neutral'}`}>
+                          {a.is_active ? 'ACTIVE' : 'INACTIVE'}
+                        </span>
+                      </td>
+                      <td>
+                        {canEdit && (
+                          <div className="row-actions">
+                            <button className="btn btn-icon" title="Edit" aria-label="Edit" onClick={() => setEditing(a)}>
+                              <i className="bi bi-pencil"></i>
+                            </button>
+                            <button className="btn btn-icon" title="Delete" aria-label="Delete" onClick={() => remove(a)}>
+                              <i className="bi bi-trash"></i>
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {!loading && rows.length > 0 && <Pagination {...paginationProps} />}
+      </section>
 
       {editing && (
         <AccountModal
@@ -142,7 +224,7 @@ function AccountModal({ row, accounts, companyParams, onClose, onSaved }) {
     e.preventDefault(); setBusy(true); setError(''); setFieldErr({});
     try {
       const body = { ...form, company: companyParams().company };
-      if (!body.parent) delete body.parent;
+      if (!body.parent) body.parent = null;
       isNew ? await api.accounts.create(body) : await api.accounts.update(row.id, body);
       onSaved();
     } catch (err) { setError(errorMessage(err)); setFieldErr(fieldErrors(err)); }
@@ -151,68 +233,69 @@ function AccountModal({ row, accounts, companyParams, onClose, onSaved }) {
 
   const parents = accounts.filter((a) => !row.id || a.id !== row.id);
 
-  return (
-    <div className="modal" role="dialog" aria-modal="true">
-      <div className="modal__dialog modal__dialog--lg">
-        <div className="modal__header">
-          <h2 className="modal__title">{isNew ? 'New account' : `Edit ${row.code}`}</h2>
-          <button className="modal__close" onClick={onClose} aria-label="Close"><i className="bi bi-x-lg" /></button>
-        </div>
-        <form onSubmit={submit}>
-          <div className="modal__body">
-            <div className="form-grid">
-              <Field label="Code" required err={fieldErr.code}>
-                <input className="input mono" value={form.code} onChange={set('code')} required disabled={!isNew} />
-              </Field>
-              <Field label="Name" required err={fieldErr.name}>
-                <input className="input" value={form.name} onChange={set('name')} required />
-              </Field>
-              <Field label="Type" required>
-                <select className="select" value={form.account_type} onChange={set('account_type')}>
-                  {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </Field>
-              <Field label="Subtype">
-                <input className="input" list="subtypes" value={form.subtype} onChange={set('subtype')} />
-                <datalist id="subtypes">{SUBTYPES.map((s) => s && <option key={s} value={s} />)}</datalist>
-              </Field>
-              <Field label="Group code">
-                <input className="input mono" value={form.group_code} onChange={set('group_code')} placeholder="Consolidated chart" />
-              </Field>
-              <Field label="Parent account">
-                <select className="select" value={form.parent} onChange={set('parent')}>
-                  <option value="">— none —</option>
-                  {parents.map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}
-                </select>
-              </Field>
-              <Field label="Postable">
-                <label className="check"><input type="checkbox" checked={!!form.is_postable} onChange={set('is_postable')} /> Can be posted to</label>
-              </Field>
-              <Field label="Intercompany">
-                <label className="check"><input type="checkbox" checked={!!form.is_intercompany} onChange={set('is_intercompany')} /> Intercompany account</label>
-              </Field>
-              <Field label="Active" span>
-                <label className="check"><input type="checkbox" checked={!!form.is_active} onChange={set('is_active')} /> Active</label>
-              </Field>
-            </div>
-            {error && <p className="field-error mt-3" role="alert">{error}</p>}
-          </div>
-          <div className="modal__footer">
-            <button type="button" className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
-          </div>
-        </form>
-      </div>
+  const check = (key, id, label) => (
+    <div className="form-check">
+      <input className="form-check-input" type="checkbox" id={id} checked={!!form[key]} onChange={set(key)} />
+      <label className="form-check-label" htmlFor={id}>{label}</label>
     </div>
   );
-}
 
-function Field({ label, required, err, span, children }) {
   return (
-    <div className={`field ${span ? 'span-all' : ''} ${err ? 'has-error' : ''}`}>
-      <label className={`label ${required ? 'label--required' : ''}`}>{label}</label>
-      {children}
-      {err && <span className="field-error">{err}</span>}
-    </div>
+    <Modal
+      show
+      onClose={onClose}
+      title={isNew ? 'New account' : `Edit ${row.code}`}
+      subtitle="Chart of accounts"
+      icon="bi-list-nested"
+      size="lg"
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" type="submit" form="accountForm" disabled={busy}>
+            <i className="bi bi-save"></i>
+            {busy ? 'Saving...' : 'Save'}
+          </button>
+        </>
+      }
+    >
+      <form id="accountForm" onSubmit={submit}>
+        <h6 className="modal-section-title"><i className="bi bi-card-text" aria-hidden="true"></i>Account Details</h6>
+        <div className="form-grid">
+          <Field label="Code" required err={fieldErr.code}>
+            <input className="form-control font-mono" value={form.code} onChange={set('code')} required disabled={!isNew} />
+          </Field>
+          <Field label="Name" required err={fieldErr.name}>
+            <input className="form-control" value={form.name} onChange={set('name')} required />
+          </Field>
+          <Field label="Type" required>
+            <select className="form-select" value={form.account_type} onChange={set('account_type')}>
+              {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </Field>
+          <Field label="Subtype">
+            <input className="form-control" list="account-subtypes" value={form.subtype} onChange={set('subtype')} />
+            <datalist id="account-subtypes">{SUBTYPES.map((s) => <option key={s} value={s} />)}</datalist>
+          </Field>
+          <Field label="Group code">
+            <input className="form-control font-mono" value={form.group_code} onChange={set('group_code')} placeholder="Consolidated chart" />
+          </Field>
+          <Field label="Parent account">
+            <select className="form-select" value={form.parent || ''} onChange={set('parent')}>
+              <option value="">— none —</option>
+              {parents.map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}
+            </select>
+          </Field>
+        </div>
+
+        <h6 className="modal-section-title"><i className="bi bi-toggles" aria-hidden="true"></i>Behaviour</h6>
+        <div className="form-grid">
+          <Field label="Postable">{check('is_postable', 'acc-postable', 'Can be posted to')}</Field>
+          <Field label="Intercompany">{check('is_intercompany', 'acc-ic', 'Intercompany account')}</Field>
+          <Field label="Status" span>{check('is_active', 'acc-active', 'Active')}</Field>
+        </div>
+
+        {error && <div className="alert alert-danger mt-3" role="alert">{error}</div>}
+      </form>
+    </Modal>
   );
 }

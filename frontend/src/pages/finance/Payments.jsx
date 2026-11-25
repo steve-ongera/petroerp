@@ -9,33 +9,42 @@
  * - GET  /payments/:id/suggest-matches/   M-Pesa/bank receipt → likely invoices
  *
  * Segregation of duties enforced server-side: approver ≠ creator ≠ executor.
+ * Paging is server-side (25 per page).
  */
 import { useCallback, useEffect, useState } from 'react';
-import { useAuth, useApp } from '../../context/AppContext';
+import { useApp } from '../../context/AppContext';
+import { useAccess } from '../../utils/access';
 import api, { errorMessage, fieldErrors } from '../../services/api';
+import Modal from '../../components/Modal';
+import Field from '../../components/Field';
+import ServerPager from '../../components/ServerPager';
+import TableSkeleton from '../../components/TableSkeleton';
 
 const DIRECTIONS = ['RECEIPT', 'PAYMENT'];
 const PARTY_TYPES = ['CUSTOMER', 'SUPPLIER', 'TRANSPORTER', 'OTHER'];
 const METHODS = ['BANK', 'CASH', 'MPESA'];
 const PURPOSES = ['INVOICE', 'ADVANCE', 'BANK_CHARGE', 'OTHER'];
-const STATUSES = ['', 'DRAFT', 'AWAITING_APPROVAL', 'APPROVED', 'POSTED', 'REVERSED', 'REJECTED'];
+const STATUSES = ['DRAFT', 'AWAITING_APPROVAL', 'APPROVED', 'POSTED', 'REVERSED', 'REJECTED'];
+const PAGE_SIZE = 25;
+
+const PILL = {
+  DRAFT: 'status-pill--neutral',
+  AWAITING_APPROVAL: 'status-pill--warning',
+  APPROVED: 'status-pill--success',
+  POSTED: 'status-pill--success',
+  REVERSED: 'status-pill--neutral',
+  REJECTED: 'status-pill--danger',
+};
+const pill = (s) => `status-pill ${PILL[s] || 'status-pill--neutral'}`;
 
 const fmtMoney = (n, c = '') => {
   if (n == null || n === '') return '—';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
-const statusCls = (s) => ({
-  DRAFT: 'status status-draft',
-  AWAITING_APPROVAL: 'status status-pending',
-  APPROVED: 'status status-active',
-  POSTED: 'status status-posted',
-  REVERSED: 'status status-closed',
-  REJECTED: 'status status-rejected',
-}[s] || 'status status-draft');
 
 export default function Payments() {
-  const { can, user } = useAuth();
+  const { can, user } = useAccess();
   const { companyParams, activeCompanyObj, notify } = useApp();
   const [rows, setRows] = useState([]);
   const [count, setCount] = useState(0);
@@ -58,8 +67,9 @@ export default function Payments() {
         ...(direction ? { direction } : {}),
         ...(search ? { search } : {}),
       });
-      setRows(res?.results || res || []);
-      setCount(res?.count ?? (res?.results || []).length);
+      const items = res?.results || res || [];
+      setRows(items);
+      setCount(res?.count ?? items.length);
     } catch (err) { setError(errorMessage(err)); }
     finally { setLoading(false); }
   }, [companyParams, page, status, direction, search]);
@@ -67,113 +77,185 @@ export default function Payments() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setPage(1); }, [status, direction, search]);
 
-  const act = async (p, fn, success) => {
+  const act = async (fn, success) => {
     try { await fn(); notify(success, 'success'); load(); }
     catch (err) { notify(errorMessage(err), 'error'); }
   };
 
+  const hasActiveFilters = !!(search || status || direction);
+  const clearFilters = () => { setSearch(''); setStatus(''); setDirection(''); };
+
   return (
-    <div className="app-content">
-      <header className="page-header">
-        <div className="page-header__main">
-          <h1 className="page-header__title">Payments</h1>
-          <p className="page-header__subtitle">
-            Receipts and outgoing payments{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
-          </p>
+    <div>
+      {/* ---------- Page header ---------- */}
+      <div className="page-header">
+        <div className="page-header__lead">
+          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-cash-coin"></i></span>
+          <div className="page-header__text">
+            <h1 className="page-title">Payments</h1>
+            <p className="page-subtitle">
+              Receipts and outgoing payments{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
+            </p>
+          </div>
         </div>
         <div className="page-header__actions">
           {can('payments.edit') && (
             <button className="btn btn-primary" onClick={() => setEditing({})}>
-              <i className="bi bi-plus-lg" /> New payment
+              <i className="bi bi-plus-lg"></i>
+              New payment
             </button>
           )}
         </div>
-      </header>
+      </div>
 
-      <div className={`table-card ${loading ? 'is-loading' : ''}`}>
-        <div className="filters">
-          <div className="input-group">
-            <span className="input-icon"><i className="bi bi-search" /></span>
-            <input className="input" placeholder="Search reference, M-Pesa…" value={search} onChange={(e) => setSearch(e.target.value)} />
+      {error && (
+        <div className="alert alert-danger" role="alert">
+          <span style={{ flex: 1 }}>{error}</span>
+          <button type="button" className="btn btn-sm btn-outline-danger" onClick={load}>Try again</button>
+        </div>
+      )}
+
+      <section className="page-card">
+        <div className="search-bar">
+          <div className="search-bar__field">
+            <i className="bi bi-search" aria-hidden="true"></i>
+            <input
+              type="text"
+              className="form-control"
+              placeholder="Search reference, M-Pesa code, phone..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="Search payments"
+            />
+            {search && (
+              <button type="button" className="search-bar__clear" onClick={() => setSearch('')} aria-label="Clear search">
+                <i className="bi bi-x-lg"></i>
+              </button>
+            )}
           </div>
-          <select className="select" value={direction} onChange={(e) => setDirection(e.target.value)}>
+          <select className="form-select" value={direction} onChange={(e) => setDirection(e.target.value)} aria-label="Direction">
             <option value="">All directions</option>
             {DIRECTIONS.map((d) => <option key={d} value={d}>{d}</option>)}
           </select>
-          <select className="select" value={status} onChange={(e) => setStatus(e.target.value)}>
-            {STATUSES.map((s) => <option key={s} value={s}>{s || 'All statuses'}</option>)}
+          <select className="form-select" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
+            <option value="">All statuses</option>
+            {STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
           </select>
-          <div className="filters__spacer" />
-          <span className="text-sm text-muted">{count} record{count === 1 ? '' : 's'}</span>
+          {hasActiveFilters && (
+            <button className="btn btn-secondary" onClick={clearFilters}>
+              <i className="bi bi-x-lg"></i> Clear
+            </button>
+          )}
         </div>
 
-        {error ? (
-          <div className="card__body">
-            <p className="field-error" role="alert">{error}</p>
-            <button className="btn mt-2" onClick={load}>Try again</button>
-          </div>
-        ) : !rows.length && !loading ? (
-          <div className="table-empty">
-            <div className="table-empty__title">No payments</div>
-            <div>Record a receipt or a payment to get started.</div>
-          </div>
-        ) : (
-          <div className="table-wrap">
-            <table className="table">
-              <thead><tr>
-                <th>Reference</th><th>Date</th><th>Direction</th><th>Party</th>
-                <th className="num">Amount</th><th className="num">Unallocated</th>
-                <th>Status</th><th className="col-actions" />
-              </tr></thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id} className="is-clickable" onClick={() => setEditing(r)}>
-                    <td className="mono">{r.reference}</td>
-                    <td>{r.payment_date}</td>
-                    <td><span className={`badge ${r.direction === 'RECEIPT' ? 'badge--success' : 'badge--info'}`}>{r.direction}</span></td>
-                    <td>
-                      {r.customer_label || r.supplier_label || r.transporter_label || r.payee || '—'}
-                      <span className="cell-sub">{r.party_type}</span>
-                    </td>
-                    <td className="num">{fmtMoney(r.amount, r.currency)}</td>
-                    <td className="num">{fmtMoney(r.unallocated_amount)}</td>
-                    <td><span className={statusCls(r.status)}>{r.status.replace('_', ' ')}</span></td>
-                    <td className="col-actions" onClick={(e) => e.stopPropagation()}>
-                      <div className="row-actions">
-                        {r.status === 'DRAFT' && r.direction === 'PAYMENT' && can('payments.edit') && (
-                          <button className="btn btn-xs" onClick={() => act(r, () => api.payments.submit(r.id), 'Sent for approval.')}>Submit</button>
-                        )}
-                        {r.status === 'AWAITING_APPROVAL' && can('approvals.decide') && r.created_by !== user?.id && (
-                          <button className="btn btn-xs btn-primary" onClick={() => act(r, () => api.payments.approve(r.id), 'Payment approved.')}>Approve</button>
-                        )}
-                        {r.status === 'APPROVED' && can('payments.execute') && r.approved_by !== user?.id && (
-                          <button className="btn btn-xs btn-primary" onClick={() => setPosting(r)}>Execute</button>
-                        )}
-                        {r.status === 'DRAFT' && r.direction === 'RECEIPT' && can('payments.edit') && (
-                          <button className="btn btn-xs btn-primary" onClick={() => setPosting(r)}>Post</button>
-                        )}
-                        {r.status === 'POSTED' && r.unallocated_amount > 0 && can('payments.edit') && (
-                          <button className="btn btn-xs" onClick={() => setPosting(r)}>Apply</button>
-                        )}
-                        {r.status === 'POSTED' && can('finance.post') && (
-                          <button className="btn btn-xs btn-danger-outline" onClick={() => act(r, () => api.payments.reverse(r.id, ''), 'Payment reversed.')}>Reverse</button>
-                        )}
-                        {r.direction === 'RECEIPT' && r.status === 'DRAFT' && (
-                          <button className="btn btn-xs" onClick={async () => {
-                            try { setSuggest(await api.payments.suggestMatches(r.id)); } catch (err) { notify(errorMessage(err), 'error'); }
-                          }}>Suggest</button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {hasActiveFilters && (
+          <div className="chip-row">
+            {search && (
+              <span className="filter-chip">Search: "{search}"<button onClick={() => setSearch('')}><i className="bi bi-x"></i></button></span>
+            )}
+            {direction && (
+              <span className="filter-chip">Direction: {direction}<button onClick={() => setDirection('')}><i className="bi bi-x"></i></button></span>
+            )}
+            {status && (
+              <span className="filter-chip">Status: {status.replace(/_/g, ' ')}<button onClick={() => setStatus('')}><i className="bi bi-x"></i></button></span>
+            )}
           </div>
         )}
 
-        <Pagination page={page} count={count} onChange={setPage} />
-      </div>
+        <div className="table-wrap__header" style={{ borderTop: '1px solid var(--border-color)' }}>
+          <span className="panel-title">
+            <i className="bi bi-list-ul text-brand"></i>
+            Payment List
+          </span>
+          <span className="chart-card__subtitle">{count} record{count !== 1 ? 's' : ''}</span>
+        </div>
+
+        {loading ? (
+          <TableSkeleton rows={8} columns={8} />
+        ) : rows.length === 0 ? (
+          <div className="empty-state">
+            <i className="bi bi-cash-coin"></i>
+            <h6>{hasActiveFilters ? 'No payments match your filters' : 'No payments yet'}</h6>
+            <p className="text-muted-soft">
+              {hasActiveFilters ? 'Try adjusting your search or filters' : "Click 'New payment' to record a receipt or a payment"}
+            </p>
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <div className="table-responsive">
+              <table className="table table-hover mb-0">
+                <thead>
+                  <tr>
+                    <th>Reference</th>
+                    <th>Date</th>
+                    <th>Direction</th>
+                    <th>Party</th>
+                    <th className="text-right">Amount</th>
+                    <th className="text-right">Unallocated</th>
+                    <th>Status</th>
+                    <th className="text-center" style={{ minWidth: '9rem' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => setEditing(r)}>
+                      <td className="cell-mono text-brand fw-600">{r.reference}</td>
+                      <td>{r.payment_date}</td>
+                      <td>
+                        <span className={`status-pill ${r.direction === 'RECEIPT' ? 'status-pill--success' : 'status-pill--neutral'}`}>
+                          {r.direction}
+                        </span>
+                      </td>
+                      <td className="cell-name">
+                        {r.customer_label || r.supplier_label || r.transporter_label || r.payee || '—'}
+                        <div className="text-muted-soft" style={{ fontSize: '0.8rem' }}>{r.party_type}</div>
+                      </td>
+                      <td className="cell-num">{fmtMoney(r.amount, r.currency)}</td>
+                      <td className="cell-num">{fmtMoney(r.unallocated_amount)}</td>
+                      <td><span className={pill(r.status)}>{r.status.replace(/_/g, ' ')}</span></td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <div className="row-actions" style={{ flexWrap: 'wrap' }}>
+                          {r.status === 'DRAFT' && r.direction === 'PAYMENT' && can('payments.edit') && (
+                            <button className="btn btn-sm btn-secondary" onClick={() => act(() => api.payments.submit(r.id), 'Sent for approval.')}>Submit</button>
+                          )}
+                          {r.status === 'AWAITING_APPROVAL' && can('approvals.decide') && r.created_by !== user?.id && (
+                            <button className="btn btn-sm btn-primary" onClick={() => act(() => api.payments.approve(r.id), 'Payment approved.')}>Approve</button>
+                          )}
+                          {r.status === 'APPROVED' && can('payments.execute') && r.approved_by !== user?.id && (
+                            <button className="btn btn-sm btn-primary" onClick={() => setPosting(r)}>Execute</button>
+                          )}
+                          {r.status === 'DRAFT' && r.direction === 'RECEIPT' && can('payments.edit') && (
+                            <button className="btn btn-sm btn-primary" onClick={() => setPosting(r)}>Post</button>
+                          )}
+                          {r.status === 'POSTED' && r.unallocated_amount > 0 && can('payments.edit') && (
+                            <button className="btn btn-sm btn-secondary" onClick={() => setPosting(r)}>Apply</button>
+                          )}
+                          {r.direction === 'RECEIPT' && r.status === 'DRAFT' && (
+                            <button className="btn btn-icon" title="Suggest matches" aria-label="Suggest matches" onClick={async () => {
+                              try { setSuggest(await api.payments.suggestMatches(r.id)); } catch (err) { notify(errorMessage(err), 'error'); }
+                            }}>
+                              <i className="bi bi-magic"></i>
+                            </button>
+                          )}
+                          {r.status === 'POSTED' && can('finance.post') && (
+                            <button className="btn btn-icon" title="Reverse" aria-label="Reverse" onClick={() => {
+                              if (window.confirm(`Reverse ${r.reference}?`)) act(() => api.payments.reverse(r.id, ''), 'Payment reversed.');
+                            }}>
+                              <i className="bi bi-arrow-counterclockwise"></i>
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {!loading && <ServerPager page={page} count={count} onChange={setPage} size={PAGE_SIZE} />}
+      </section>
 
       {editing && (
         <PaymentModal
@@ -190,9 +272,7 @@ export default function Payments() {
           onSaved={() => { setPosting(null); notify('Posted.', 'success'); load(); }}
         />
       )}
-      {suggest && (
-        <SuggestModal data={suggest} onClose={() => setSuggest(null)} />
-      )}
+      {suggest && <SuggestModal data={suggest} onClose={() => setSuggest(null)} />}
     </div>
   );
 }
@@ -239,99 +319,109 @@ function PaymentModal({ row, companyParams, onClose, onSaved }) {
   };
 
   return (
-    <div className="modal" role="dialog" aria-modal="true">
-      <div className="modal__dialog modal__dialog--lg">
-        <div className="modal__header">
-          <h2 className="modal__title">{isNew ? 'New payment' : `Edit ${row.reference}`}</h2>
-          <button className="modal__close" onClick={onClose} aria-label="Close"><i className="bi bi-x-lg" /></button>
+    <Modal
+      show
+      onClose={onClose}
+      title={isNew ? 'New payment' : `Edit ${row.reference}`}
+      subtitle="Receipt or outgoing payment"
+      icon="bi-cash-coin"
+      size="lg"
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" type="submit" form="paymentForm" disabled={busy}>
+            <i className="bi bi-save"></i>
+            {busy ? 'Saving...' : 'Save'}
+          </button>
+        </>
+      }
+    >
+      <form id="paymentForm" onSubmit={submit}>
+        <h6 className="modal-section-title"><i className="bi bi-person-lines-fill" aria-hidden="true"></i>Party</h6>
+        <div className="form-grid">
+          <Field label="Direction" required>
+            <select className="form-select" value={form.direction} onChange={set('direction')}>
+              {DIRECTIONS.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </Field>
+          <Field label="Party type" required>
+            <select className="form-select" value={form.party_type} onChange={set('party_type')}>
+              {PARTY_TYPES.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </Field>
+          {form.party_type === 'CUSTOMER' && (
+            <Field label="Customer" required err={fieldErr.customer} span>
+              <select className="form-select" value={form.customer} onChange={set('customer')} required>
+                <option value="">—</option>
+                {customers.map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}
+              </select>
+            </Field>
+          )}
+          {form.party_type === 'SUPPLIER' && (
+            <Field label="Supplier" required err={fieldErr.supplier} span>
+              <select className="form-select" value={form.supplier} onChange={set('supplier')} required>
+                <option value="">—</option>
+                {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}
+              </select>
+            </Field>
+          )}
+          {form.party_type === 'TRANSPORTER' && (
+            <Field label="Transporter" required err={fieldErr.transporter} span>
+              <select className="form-select" value={form.transporter} onChange={set('transporter')} required>
+                <option value="">—</option>
+                {transporters.map((t) => <option key={t.id} value={t.id}>{t.code} · {t.name}</option>)}
+              </select>
+            </Field>
+          )}
+          {form.party_type === 'OTHER' && (
+            <Field label="Payee" span>
+              <input className="form-control" value={form.payee} onChange={set('payee')} />
+            </Field>
+          )}
         </div>
-        <form onSubmit={submit}>
-          <div className="modal__body">
-            <div className="form-grid">
-              <Field label="Direction" required>
-                <select className="select" value={form.direction} onChange={set('direction')}>
-                  {DIRECTIONS.map((d) => <option key={d} value={d}>{d}</option>)}
-                </select>
-              </Field>
-              <Field label="Party type" required>
-                <select className="select" value={form.party_type} onChange={set('party_type')}>
-                  {PARTY_TYPES.map((p) => <option key={p} value={p}>{p}</option>)}
-                </select>
-              </Field>
 
-              {form.party_type === 'CUSTOMER' && (
-                <Field label="Customer" required>
-                  <select className="select" value={form.customer} onChange={set('customer')} required>
-                    <option value="">—</option>
-                    {customers.map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}
-                  </select>
-                </Field>
-              )}
-              {form.party_type === 'SUPPLIER' && (
-                <Field label="Supplier" required>
-                  <select className="select" value={form.supplier} onChange={set('supplier')} required>
-                    <option value="">—</option>
-                    {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}
-                  </select>
-                </Field>
-              )}
-              {form.party_type === 'TRANSPORTER' && (
-                <Field label="Transporter" required>
-                  <select className="select" value={form.transporter} onChange={set('transporter')} required>
-                    <option value="">—</option>
-                    {transporters.map((t) => <option key={t.id} value={t.id}>{t.code} · {t.name}</option>)}
-                  </select>
-                </Field>
-              )}
-              {form.party_type === 'OTHER' && (
-                <Field label="Payee"><input className="input" value={form.payee} onChange={set('payee')} /></Field>
-              )}
+        <h6 className="modal-section-title"><i className="bi bi-bank" aria-hidden="true"></i>Payment Details</h6>
+        <div className="form-grid">
+          <Field label="Method" required>
+            <select className="form-select" value={form.method} onChange={set('method')}>
+              {METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </Field>
+          <Field label="Bank / cash account" required err={fieldErr.bank_account}>
+            <select className="form-select" value={form.bank_account} onChange={set('bank_account')} required>
+              <option value="">—</option>
+              {bankAccounts.map((b) => <option key={b.id} value={b.id}>{b.name} · {b.currency}</option>)}
+            </select>
+          </Field>
+          <Field label="Date" required err={fieldErr.payment_date}>
+            <input type="date" className="form-control" value={form.payment_date} onChange={set('payment_date')} required />
+          </Field>
+          <Field label="Amount" required err={fieldErr.amount}>
+            <input type="number" step="0.01" className="form-control num" value={form.amount} onChange={set('amount')} required />
+          </Field>
+          <Field label="Purpose">
+            <select className="form-select" value={form.purpose} onChange={set('purpose')}>
+              {PURPOSES.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </Field>
+          {form.method === 'MPESA' && (
+            <Field label="M-Pesa reference" err={fieldErr.mpesa_reference}>
+              <input className="form-control font-mono" value={form.mpesa_reference} onChange={set('mpesa_reference')} />
+            </Field>
+          )}
+          {form.method === 'BANK' && (
+            <Field label="Bank reference">
+              <input className="form-control font-mono" value={form.bank_reference} onChange={set('bank_reference')} />
+            </Field>
+          )}
+          <Field label="Narration" span>
+            <input className="form-control" value={form.narration} onChange={set('narration')} />
+          </Field>
+        </div>
 
-              <Field label="Method" required>
-                <select className="select" value={form.method} onChange={set('method')}>
-                  {METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </Field>
-              <Field label="Bank / cash account" required err={fieldErr.bank_account}>
-                <select className="select" value={form.bank_account} onChange={set('bank_account')} required>
-                  <option value="">—</option>
-                  {bankAccounts.map((b) => <option key={b.id} value={b.id}>{b.name} · {b.currency}</option>)}
-                </select>
-              </Field>
-              <Field label="Date" required>
-                <input type="date" className="input" value={form.payment_date} onChange={set('payment_date')} required />
-              </Field>
-              <Field label="Amount" required err={fieldErr.amount}>
-                <input type="number" step="0.01" className="input num" value={form.amount} onChange={set('amount')} required />
-              </Field>
-              <Field label="Purpose">
-                <select className="select" value={form.purpose} onChange={set('purpose')}>
-                  {PURPOSES.map((p) => <option key={p} value={p}>{p}</option>)}
-                </select>
-              </Field>
-              {form.method === 'MPESA' && (
-                <Field label="M-Pesa reference" err={fieldErr.mpesa_reference}>
-                  <input className="input mono" value={form.mpesa_reference} onChange={set('mpesa_reference')} />
-                </Field>
-              )}
-              {form.method === 'BANK' && (
-                <Field label="Bank reference">
-                  <input className="input mono" value={form.bank_reference} onChange={set('bank_reference')} />
-                </Field>
-              )}
-              <Field label="Narration" span>
-                <input className="input" value={form.narration} onChange={set('narration')} />
-              </Field>
-            </div>
-            {error && <p className="field-error mt-3" role="alert">{error}</p>}
-          </div>
-          <div className="modal__footer">
-            <button type="button" className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
-          </div>
-        </form>
-      </div>
-    </div>
+        {error && <div className="alert alert-danger mt-3" role="alert">{error}</div>}
+      </form>
+    </Modal>
   );
 }
 
@@ -340,21 +430,21 @@ function PostPaymentModal({ payment, onClose, onSaved }) {
   const [candidates, setCandidates] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const isAdvanceApply = payment.status === 'POSTED';
 
   useEffect(() => {
-    // Load the matching open invoices for this party
     const load = async () => {
       try {
         if (payment.direction === 'RECEIPT' && payment.customer) {
-          const inv = await api.salesInvoices.listAll({ company: payment.company, customer: payment.customer, status: 'POSTED' });
-          setCandidates(inv.map((i) => ({ kind: 'sales_invoice', id: i.id, ref: i.reference, outstanding: i.outstanding })));
+          const inv = await api.salesInvoices.listAll({ company: payment.company, customer: payment.customer });
+          setCandidates(inv.filter((i) => ['POSTED', 'PART_PAID'].includes(i.status)).map((i) => ({ kind: 'sales_invoice', id: i.id, ref: i.reference, outstanding: i.outstanding })));
         } else if (payment.direction === 'PAYMENT') {
           if (payment.supplier) {
-            const inv = await api.purchaseInvoices.listAll({ company: payment.company, supplier: payment.supplier, status: 'POSTED' });
-            setCandidates(inv.map((i) => ({ kind: 'purchase_invoice', id: i.id, ref: i.reference, outstanding: i.outstanding })));
+            const inv = await api.purchaseInvoices.listAll({ company: payment.company, supplier: payment.supplier });
+            setCandidates(inv.filter((i) => ['POSTED', 'PART_PAID'].includes(i.status)).map((i) => ({ kind: 'purchase_invoice', id: i.id, ref: i.reference, outstanding: i.outstanding })));
           } else if (payment.transporter) {
-            const inv = await api.transporterInvoices.listAll({ company: payment.company, transporter: payment.transporter, status: 'POSTED' });
-            setCandidates(inv.map((i) => ({ kind: 'transporter_invoice', id: i.id, ref: i.reference, outstanding: i.outstanding })));
+            const inv = await api.transporterInvoices.listAll({ company: payment.company, transporter: payment.transporter });
+            setCandidates(inv.filter((i) => ['POSTED', 'PART_PAID'].includes(i.status)).map((i) => ({ kind: 'transporter_invoice', id: i.id, ref: i.reference, outstanding: i.outstanding })));
           }
         }
       } catch { /* non-fatal */ }
@@ -369,131 +459,107 @@ function PostPaymentModal({ payment, onClose, onSaved }) {
       return [...as, { kind: c.kind, id: c.id, ref: c.ref, amount: c.outstanding }];
     });
   };
-
   const setAmt = (c, v) => setAllocations((as) => as.map((a) => (a.kind === c.kind && a.id === c.id ? { ...a, amount: v } : a)));
 
   const submit = async (e) => {
     e.preventDefault(); setBusy(true); setError('');
     try {
       const payload = allocations.map((a) => ({ [a.kind]: a.id, amount: a.amount }));
-      await api.payments.post(payment.id, payload);
+      isAdvanceApply ? await api.payments.applyAdvance(payment.id, payload) : await api.payments.post(payment.id, payload);
       onSaved();
     } catch (err) { setError(errorMessage(err)); }
     finally { setBusy(false); }
   };
 
+  const verb = isAdvanceApply ? 'Apply' : (payment.direction === 'PAYMENT' ? 'Execute' : 'Post');
+
   return (
-    <div className="modal" role="dialog" aria-modal="true">
-      <div className="modal__dialog modal__dialog--lg">
-        <div className="modal__header">
-          <div>
-            <h2 className="modal__title">Post {payment.reference}</h2>
-            <p className="modal__subtitle">Allocate to open invoices (leave blank to hold as advance)</p>
-          </div>
-          <button className="modal__close" onClick={onClose} aria-label="Close"><i className="bi bi-x-lg" /></button>
+    <Modal
+      show
+      onClose={onClose}
+      title={`${verb} ${payment.reference}`}
+      subtitle="Allocate to open invoices (leave empty to hold as an advance)"
+      icon="bi-cash-coin"
+      size="lg"
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" type="submit" form="postPaymentForm" disabled={busy}>
+            <i className="bi bi-check2-circle"></i>
+            {busy ? 'Working...' : verb}
+          </button>
+        </>
+      }
+    >
+      <form id="postPaymentForm" onSubmit={submit}>
+        <div className="kv">
+          <div className="kv__item"><div className="kv__label">Payment amount</div><div className="kv__value">{fmtMoney(payment.amount, payment.currency)}</div></div>
+          <div className="kv__item"><div className="kv__label">Unallocated</div><div className="kv__value">{fmtMoney(payment.unallocated_amount)}</div></div>
         </div>
-        <form onSubmit={submit}>
-          <div className="modal__body">
-            <p className="text-sm text-muted mb-3">
-              Payment amount: <strong>{fmtMoney(payment.amount, payment.currency)}</strong>
-              {payment.unallocated_amount > 0 && ` · unallocated ${fmtMoney(payment.unallocated_amount)}`}
-            </p>
-            {!candidates.length ? (
-              <p className="text-muted">No open invoices found for this party.</p>
-            ) : (
-              <div className="table-wrap">
-                <table className="table table--compact">
-                  <thead><tr><th /><th>Invoice</th><th className="num">Outstanding</th><th>Allocate</th></tr></thead>
-                  <tbody>
-                    {candidates.map((c) => {
-                      const a = allocations.find((x) => x.kind === c.kind && x.id === c.id);
-                      return (
-                        <tr key={`${c.kind}-${c.id}`}>
-                          <td><input type="checkbox" checked={!!a} onChange={() => toggle(c)} /></td>
-                          <td className="mono">{c.ref}</td>
-                          <td className="num">{fmtMoney(c.outstanding)}</td>
-                          <td>
-                            {a && (
-                              <input type="number" step="0.01" className="input input-sm num" style={{ width: 140 }}
-                                     value={a.amount} onChange={(e) => setAmt(c, e.target.value)} />
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            {error && <p className="field-error mt-3" role="alert">{error}</p>}
+
+        <h6 className="modal-section-title"><i className="bi bi-receipt" aria-hidden="true"></i>Open Invoices</h6>
+        {!candidates.length ? (
+          <p className="text-muted-soft">No open invoices found for this party.</p>
+        ) : (
+          <div className="table-wrap">
+            <div className="table-responsive">
+              <table className="table table-hover mb-0">
+                <thead>
+                  <tr><th style={{ width: '2.5rem' }}></th><th>Invoice</th><th className="text-right">Outstanding</th><th>Allocate</th></tr>
+                </thead>
+                <tbody>
+                  {candidates.map((c) => {
+                    const a = allocations.find((x) => x.kind === c.kind && x.id === c.id);
+                    return (
+                      <tr key={`${c.kind}-${c.id}`}>
+                        <td><input type="checkbox" className="form-check-input" checked={!!a} onChange={() => toggle(c)} /></td>
+                        <td className="cell-mono text-brand fw-600">{c.ref}</td>
+                        <td className="cell-num">{fmtMoney(c.outstanding)}</td>
+                        <td>
+                          {a && (
+                            <input type="number" step="0.01" className="form-control num" style={{ width: 150 }}
+                                   value={a.amount} onChange={(e) => setAmt(c, e.target.value)} />
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
-          <div className="modal__footer">
-            <button type="button" className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary" disabled={busy}>{busy ? 'Posting…' : 'Post'}</button>
-          </div>
-        </form>
-      </div>
-    </div>
+        )}
+        {error && <div className="alert alert-danger mt-3" role="alert">{error}</div>}
+      </form>
+    </Modal>
   );
 }
 
 function SuggestModal({ data, onClose }) {
   return (
-    <div className="modal" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="modal__dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="modal__header">
-          <div>
-            <h2 className="modal__title">Suggested matches</h2>
-            <p className="modal__subtitle">{data.customer_name || 'No customer identified'}</p>
-          </div>
-          <button className="modal__close" onClick={onClose} aria-label="Close"><i className="bi bi-x-lg" /></button>
-        </div>
-        <div className="modal__body">
-          {!data.invoices?.length ? (
-            <p className="text-muted">No open invoices.</p>
-          ) : (
-            <div className="rank-list">
-              {data.invoices.map((i) => (
-                <div key={i.invoice} className="rank-item">
-                  <div className="rank-item__main">
-                    <div className="rank-item__name mono">{i.reference}</div>
-                    {i.exact_match && <span className="badge badge--success">Exact match</span>}
-                  </div>
-                  <div className="rank-item__value">{fmtMoney(i.outstanding)}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="modal__footer">
-          <button className="btn" onClick={onClose}>Close</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Field({ label, required, err, span, children }) {
-  return (
-    <div className={`field ${span ? 'span-all' : ''} ${err ? 'has-error' : ''}`}>
-      <label className={`label ${required ? 'label--required' : ''}`}>{label}</label>
-      {children}
-      {err && <span className="field-error">{err}</span>}
-    </div>
-  );
-}
-
-function Pagination({ page, count, onChange, size = 25 }) {
-  const pages = Math.max(1, Math.ceil((count || 0) / size));
-  if (count <= size) return null;
-  return (
-    <div className="pagination pagination--bordered">
-      <span className="pagination__info">Page <strong>{page}</strong> of <strong>{pages}</strong> · {count} items</span>
-      <div className="pagination__list">
-        <button className="pagination__btn" disabled={page <= 1} onClick={() => onChange(page - 1)}>Prev</button>
-        <button className="pagination__btn active">{page}</button>
-        <button className="pagination__btn" disabled={page >= pages} onClick={() => onChange(page + 1)}>Next</button>
-      </div>
-    </div>
+    <Modal
+      show
+      onClose={onClose}
+      title="Suggested matches"
+      subtitle={data.customer_name || 'No customer identified'}
+      icon="bi-magic"
+      footer={<button type="button" className="btn btn-secondary" onClick={onClose}>Close</button>}
+    >
+      {!data.invoices?.length ? (
+        <p className="text-muted-soft">No open invoices.</p>
+      ) : (
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+          {data.invoices.map((i) => (
+            <li key={i.invoice} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border-color)' }}>
+              <span>
+                <span className="cell-mono text-brand fw-600">{i.reference}</span>
+                {i.exact_match && <span className="status-pill status-pill--success" style={{ marginLeft: 8 }}>EXACT MATCH</span>}
+              </span>
+              <span className="cell-num">{fmtMoney(i.outstanding)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Modal>
   );
 }
