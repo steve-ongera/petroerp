@@ -101,11 +101,7 @@ export default function Login() {
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
 
-          {location.state?.from && (
-            <p className="login-note">
-              You were redirected from <code>{location.state.from}</code>.
-            </p>
-          )}
+         
 
           <p className="login-note">Need an account? Ask a Group Administrator.</p>
         </form>

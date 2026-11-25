@@ -7,17 +7,22 @@
  * Reading is GET /fiscal-years/ and /accounting-periods/ (readOnly resource).
  */
 import { useCallback, useEffect, useState } from 'react';
-import { useAuth, useApp } from '../../context/AppContext';
+import { useApp } from '../../context/AppContext';
+import { useAccess } from '../../utils/access';
 import api, { errorMessage, fieldErrors } from '../../services/api';
+import Modal from '../../components/Modal';
+import Field from '../../components/Field';
+import Pagination, { usePagination } from '../../components/Pagination';
+import TableSkeleton from '../../components/TableSkeleton';
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
+const pill = (status) => `status-pill ${status === 'OPEN' ? 'status-pill--success' : 'status-pill--neutral'}`;
 
 export default function FiscalYears() {
-  const { can } = useAuth();
+  const { can } = useAccess();
   const { companyParams, activeCompanyObj, notify } = useApp();
   const [years, setYears] = useState([]);
   const [periods, setPeriods] = useState([]);
-  const [selectedYear, setSelectedYear] = useState(null);
+  const [selectedYearId, setSelectedYearId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
@@ -32,22 +37,18 @@ export default function FiscalYears() {
         api.accountingPeriods.listAll({ ...companyParams() }),
       ]);
       setYears(y); setPeriods(p);
-      if (selectedYear && !y.some((x) => x.id === selectedYear.id)) setSelectedYear(null);
+      setSelectedYearId((cur) => (cur && y.some((x) => x.id === cur) ? cur : null));
     } catch (err) { setError(errorMessage(err)); }
     finally { setLoading(false); }
-  }, [companyParams, selectedYear]);
+  }, [companyParams]);
 
   useEffect(() => { load(); }, [load]);
 
   const closeYear = async (y) => {
     if (!window.confirm(`Close ${y.name}? This posts the year-end closing entry and closes all its periods.`)) return;
-    try {
-      await api.fiscalYears.close(y.id);
-      notify('Fiscal year closed.', 'success');
-      load();
-    } catch (err) { notify(errorMessage(err), 'error'); }
+    try { await api.fiscalYears.close(y.id); notify('Fiscal year closed.', 'success'); load(); }
+    catch (err) { notify(errorMessage(err), 'error'); }
   };
-
   const closePeriod = async (p) => {
     try { await api.accountingPeriods.close(p.id); notify('Period closed.', 'success'); load(); }
     catch (err) { notify(errorMessage(err), 'error'); }
@@ -57,118 +58,95 @@ export default function FiscalYears() {
     catch (err) { notify(errorMessage(err), 'error'); }
   };
 
-  const periodsFor = (y) => periods.filter((p) => String(p.fiscal_year) === String(y.id));
+  const selectedYear = years.find((y) => y.id === selectedYearId) || null;
+  const yearPeriods = selectedYear ? periods.filter((p) => String(p.fiscal_year) === String(selectedYear.id)) : [];
 
   return (
-    <div className="app-content">
-      <header className="page-header">
-        <div className="page-header__main">
-          <h1 className="page-header__title">Fiscal years</h1>
-          <p className="page-header__subtitle">
-            Year-end closing and monthly accounting periods
-            {activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
-          </p>
+    <div>
+      {/* ---------- Page header ---------- */}
+      <div className="page-header">
+        <div className="page-header__lead">
+          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-calendar3"></i></span>
+          <div className="page-header__text">
+            <h1 className="page-title">Fiscal years</h1>
+            <p className="page-subtitle">
+              Year-end closing and monthly accounting periods{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
+            </p>
+          </div>
         </div>
         <div className="page-header__actions">
           {canManage && (
             <button className="btn btn-primary" onClick={() => setCreating(true)}>
-              <i className="bi bi-plus-lg" /> New fiscal year
+              <i className="bi bi-plus-lg"></i>
+              New fiscal year
             </button>
           )}
         </div>
-      </header>
+      </div>
 
-      {error ? (
-        <div className="card"><div className="card__body">
-          <p className="field-error" role="alert">{error}</p>
-          <button className="btn mt-2" onClick={load}>Try again</button>
-        </div></div>
-      ) : loading ? (
-        <div className="state-screen">Loading…</div>
-      ) : (
-        <div className="split split--wide-left">
-          {/* years */}
-          <div className="card">
-            <div className="card__header">
-              <h2 className="card__title">Years</h2>
-            </div>
-            {!years.length ? (
-              <div className="card__body">
-                <div className="table-empty">
-                  <div className="table-empty__title">No fiscal years</div>
-                  <div>Create one to start posting journals.</div>
-                </div>
-              </div>
-            ) : (
-              <div className="table-wrap">
-                <table className="table">
-                  <thead>
-                    <tr><th>Name</th><th>Start</th><th>End</th><th>Status</th><th className="col-actions" /></tr>
-                  </thead>
-                  <tbody>
-                    {years.map((y) => (
-                      <tr key={y.id} className={`is-clickable ${selectedYear?.id === y.id ? 'is-selected' : ''}`}
-                          onClick={() => setSelectedYear(y)}>
-                        <td className="fw-500">{y.name}</td>
-                        <td>{y.start_date}</td>
-                        <td>{y.end_date}</td>
-                        <td><span className={`status ${y.status === 'OPEN' ? 'status-active' : 'status-closed'}`}>{y.status}</span></td>
-                        <td className="col-actions" onClick={(e) => e.stopPropagation()}>
-                          {canManage && y.status === 'OPEN' && (
-                            <button className="btn btn-sm" onClick={() => closeYear(y)}>Close year</button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          {/* periods */}
-          <div className="card">
-            <div className="card__header">
-              <h2 className="card__title">
-                {selectedYear ? `Periods · ${selectedYear.name}` : 'Periods'}
-              </h2>
-            </div>
-            {!selectedYear ? (
-              <div className="card__body"><p className="text-muted">Select a fiscal year to see its periods.</p></div>
-            ) : !periodsFor(selectedYear).length ? (
-              <div className="card__body">
-                <p className="text-muted">No periods generated for this year.</p>
-              </div>
-            ) : (
-              <div className="table-wrap">
-                <table className="table table--compact">
-                  <thead>
-                    <tr><th>Period</th><th>Start</th><th>End</th><th>Status</th><th className="col-actions" /></tr>
-                  </thead>
-                  <tbody>
-                    {periodsFor(selectedYear).map((p) => (
-                      <tr key={p.id}>
-                        <td className="fw-500">{p.name}</td>
-                        <td>{p.start_date}</td>
-                        <td>{p.end_date}</td>
-                        <td><span className={`status ${p.status === 'OPEN' ? 'status-active' : 'status-closed'}`}>{p.status}</span></td>
-                        <td className="col-actions">
-                          {canManage && p.status === 'OPEN' && (
-                            <button className="btn btn-xs" onClick={() => closePeriod(p)}>Close</button>
-                          )}
-                          {canManage && p.status === 'CLOSED' && selectedYear.status !== 'CLOSED' && (
-                            <button className="btn btn-xs" onClick={() => reopenPeriod(p)}>Reopen</button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+      {error && (
+        <div className="alert alert-danger" role="alert">
+          <span style={{ flex: 1 }}>{error}</span>
+          <button type="button" className="btn btn-sm btn-outline-danger" onClick={load}>Try again</button>
         </div>
       )}
+
+      <div className="split split--wide-left">
+        {/* ---------- Years ---------- */}
+        <section className="page-card">
+          <div className="table-wrap__header">
+            <span className="panel-title">
+              <i className="bi bi-calendar-event text-brand"></i>
+              Years
+            </span>
+            <span className="chart-card__subtitle">{years.length} year{years.length !== 1 ? 's' : ''}</span>
+          </div>
+
+          {loading ? (
+            <TableSkeleton rows={5} columns={5} />
+          ) : (
+            <YearsTable
+              rows={years}
+              selectedId={selectedYearId}
+              canManage={canManage}
+              onSelect={(y) => setSelectedYearId(y.id)}
+              onClose={closeYear}
+            />
+          )}
+        </section>
+
+        {/* ---------- Periods ---------- */}
+        <section className="page-card">
+          <div className="table-wrap__header">
+            <span className="panel-title">
+              <i className="bi bi-calendar-week text-brand"></i>
+              {selectedYear ? `Periods · ${selectedYear.name}` : 'Periods'}
+            </span>
+            {selectedYear && (
+              <span className="chart-card__subtitle">{yearPeriods.length} period{yearPeriods.length !== 1 ? 's' : ''}</span>
+            )}
+          </div>
+
+          {loading ? (
+            <TableSkeleton rows={6} columns={5} />
+          ) : !selectedYear ? (
+            <div className="empty-state">
+              <i className="bi bi-hand-index"></i>
+              <h6>Select a fiscal year</h6>
+              <p className="text-muted-soft">Pick a year on the left to see its accounting periods</p>
+            </div>
+          ) : (
+            <PeriodsTable
+              key={selectedYear.id}
+              rows={yearPeriods}
+              yearClosed={selectedYear.status === 'CLOSED'}
+              canManage={canManage}
+              onClose={closePeriod}
+              onReopen={reopenPeriod}
+            />
+          )}
+        </section>
+      </div>
 
       {creating && (
         <NewYearModal
@@ -181,8 +159,127 @@ export default function FiscalYears() {
   );
 }
 
+function YearsTable({ rows, selectedId, canManage, onSelect, onClose }) {
+  const { pageRows, paginationProps } = usePagination(rows);
+
+  if (rows.length === 0) {
+    return (
+      <div className="empty-state">
+        <i className="bi bi-calendar3"></i>
+        <h6>No fiscal years yet</h6>
+        <p className="text-muted-soft">Click 'New fiscal year' to start posting journals</p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="table-wrap">
+        <div className="table-responsive">
+          <table className="table table-hover mb-0">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Start</th>
+                <th>End</th>
+                <th>Status</th>
+                <th className="text-center" style={{ width: '8rem' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pageRows.map((y) => (
+                <tr
+                  key={y.id}
+                  className={selectedId === y.id ? 'is-selected' : ''}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => onSelect(y)}
+                >
+                  <td className="cell-name text-brand fw-600">{y.name}</td>
+                  <td>{y.start_date}</td>
+                  <td>{y.end_date}</td>
+                  <td><span className={pill(y.status)}>{y.status}</span></td>
+                  <td onClick={(e) => e.stopPropagation()}>
+                    {canManage && y.status === 'OPEN' && (
+                      <div className="row-actions">
+                        <button className="btn btn-sm btn-secondary" onClick={() => onClose(y)}>
+                          <i className="bi bi-lock"></i> Close year
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <Pagination {...paginationProps} />
+    </>
+  );
+}
+
+function PeriodsTable({ rows, yearClosed, canManage, onClose, onReopen }) {
+  const { pageRows, paginationProps } = usePagination(rows);
+
+  if (rows.length === 0) {
+    return (
+      <div className="empty-state">
+        <i className="bi bi-calendar-x"></i>
+        <h6>No periods for this year</h6>
+        <p className="text-muted-soft">Periods are generated when the fiscal year is created</p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="table-wrap">
+        <div className="table-responsive">
+          <table className="table table-hover mb-0">
+            <thead>
+              <tr>
+                <th>Period</th>
+                <th>Start</th>
+                <th>End</th>
+                <th>Status</th>
+                <th className="text-center" style={{ width: '8rem' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pageRows.map((p) => (
+                <tr key={p.id}>
+                  <td className="cell-name fw-600">{p.name}</td>
+                  <td>{p.start_date}</td>
+                  <td>{p.end_date}</td>
+                  <td><span className={pill(p.status)}>{p.status}</span></td>
+                  <td>
+                    <div className="row-actions">
+                      {canManage && p.status === 'OPEN' && (
+                        <button className="btn btn-sm btn-secondary" onClick={() => onClose(p)}>
+                          <i className="bi bi-lock"></i> Close
+                        </button>
+                      )}
+                      {canManage && p.status === 'CLOSED' && !yearClosed && (
+                        <button className="btn btn-sm btn-secondary" onClick={() => onReopen(p)}>
+                          <i className="bi bi-unlock"></i> Reopen
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <Pagination {...paginationProps} />
+    </>
+  );
+}
+
 function NewYearModal({ companyParams, onClose, onSaved }) {
-  const [form, setForm] = useState({ name: `FY ${new Date().getFullYear()}`, start_date: `${new Date().getFullYear()}-01-01`, end_date: `${new Date().getFullYear()}-12-31` });
+  const yr = new Date().getFullYear();
+  const [form, setForm] = useState({ name: `FY ${yr}`, start_date: `${yr}-01-01`, end_date: `${yr}-12-31` });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [fieldErr, setFieldErr] = useState({});
@@ -193,45 +290,42 @@ function NewYearModal({ companyParams, onClose, onSaved }) {
     try {
       await api.fiscalYears.create({ ...form, company: companyParams().company });
       onSaved();
-    } catch (err) {
-      setError(errorMessage(err)); setFieldErr(fieldErrors(err));
-    } finally { setBusy(false); }
+    } catch (err) { setError(errorMessage(err)); setFieldErr(fieldErrors(err)); }
+    finally { setBusy(false); }
   };
 
   return (
-    <div className="modal" role="dialog" aria-modal="true">
-      <div className="modal__dialog">
-        <div className="modal__header">
-          <h2 className="modal__title">New fiscal year</h2>
-          <button className="modal__close" onClick={onClose} aria-label="Close"><i className="bi bi-x-lg" /></button>
+    <Modal
+      show
+      onClose={onClose}
+      title="New fiscal year"
+      subtitle="Monthly accounting periods are created automatically"
+      icon="bi-calendar3"
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" type="submit" form="fiscalYearForm" disabled={busy}>
+            <i className="bi bi-save"></i>
+            {busy ? 'Creating...' : 'Create'}
+          </button>
+        </>
+      }
+    >
+      <form id="fiscalYearForm" onSubmit={submit}>
+        <h6 className="modal-section-title"><i className="bi bi-calendar-range" aria-hidden="true"></i>Year Details</h6>
+        <div className="form-grid">
+          <Field label="Name" required err={fieldErr.name} span>
+            <input className="form-control" value={form.name} onChange={set('name')} required />
+          </Field>
+          <Field label="Start date" required err={fieldErr.start_date}>
+            <input type="date" className="form-control" value={form.start_date} onChange={set('start_date')} required />
+          </Field>
+          <Field label="End date" required err={fieldErr.end_date}>
+            <input type="date" className="form-control" value={form.end_date} onChange={set('end_date')} required />
+          </Field>
         </div>
-        <form onSubmit={submit}>
-          <div className="modal__body">
-            <div className="form">
-              <div className={`field ${fieldErr.name ? 'has-error' : ''}`}>
-                <label className="label label--required">Name</label>
-                <input className="input" value={form.name} onChange={set('name')} required />
-              </div>
-              <div className="form-grid">
-                <div className={`field ${fieldErr.start_date ? 'has-error' : ''}`}>
-                  <label className="label label--required">Start date</label>
-                  <input type="date" className="input" value={form.start_date} onChange={set('start_date')} required />
-                </div>
-                <div className={`field ${fieldErr.end_date ? 'has-error' : ''}`}>
-                  <label className="label label--required">End date</label>
-                  <input type="date" className="input" value={form.end_date} onChange={set('end_date')} required />
-                </div>
-              </div>
-              <p className="field-hint">Monthly accounting periods are created automatically.</p>
-            </div>
-            {error && <p className="field-error mt-3" role="alert">{error}</p>}
-          </div>
-          <div className="modal__footer">
-            <button type="button" className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary" disabled={busy}>{busy ? 'Creating…' : 'Create'}</button>
-          </div>
-        </form>
-      </div>
-    </div>
+        {error && <div className="alert alert-danger mt-3" role="alert">{error}</div>}
+      </form>
+    </Modal>
   );
 }

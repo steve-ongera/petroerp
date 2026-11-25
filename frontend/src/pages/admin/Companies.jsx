@@ -5,8 +5,13 @@
  * - Each company is the "legal entity" everything else is scoped to.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { useAuth, useApp } from '../../context/AppContext';
+import { useApp } from '../../context/AppContext';
+import { useAccess } from '../../utils/access';
 import api, { errorMessage, fieldErrors } from '../../services/api';
+import Modal from '../../components/Modal';
+import Field from '../../components/Field';
+import Pagination, { usePagination } from '../../components/Pagination';
+import TableSkeleton from '../../components/TableSkeleton';
 
 const EMPTY = {
   code: '', name: '', country: 'KE', functional_currency: '',
@@ -15,123 +20,192 @@ const EMPTY = {
   delivery_loss_tolerance_pct: '', is_active: true,
 };
 
+const COUNTRIES = { KE: 'Kenya', CD: 'DR Congo' };
+
 export default function Companies() {
-  const { user, can } = useAuth();
+  const { can, isAdmin } = useAccess();
   const { notify } = useApp();
   const [rows, setRows] = useState([]);
   const [currencies, setCurrencies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
+  const [country, setCountry] = useState('');
   const [editing, setEditing] = useState(null); // null | {..company} (new if !id)
-  const isGroupAdmin = user?.is_superuser || user?.role === 'GROUP_ADMIN' || user?.role === 'SUPERUSER';
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const res = await api.companies.list({ search, ordering: 'code', page_size: 200 });
+      const res = await api.companies.list({
+        ordering: 'code', page_size: 200,
+        ...(search ? { search } : {}),
+        ...(country ? { country } : {}),
+      });
       setRows(res?.results || res || []);
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [search]);
+    } catch (err) { setError(errorMessage(err)); }
+    finally { setLoading(false); }
+  }, [search, country]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => {
-    api.currencies.listAll().then(setCurrencies).catch(() => {});
-  }, []);
-
-  const openNew = () => setEditing({ ...EMPTY });
-  const openEdit = (c) => setEditing({ ...c });
+  useEffect(() => { api.currencies.listAll().then(setCurrencies).catch(() => {}); }, []);
 
   const remove = async (c) => {
     if (!window.confirm(`Delete company ${c.code}? This cannot be undone.`)) return;
-    try {
-      await api.companies.remove(c.id);
-      notify('Company deleted.', 'success');
-      load();
-    } catch (err) {
-      notify(errorMessage(err), 'error');
-    }
+    try { await api.companies.remove(c.id); notify('Company deleted.', 'success'); load(); }
+    catch (err) { notify(errorMessage(err), 'error'); }
   };
 
+  const canEdit = can('company.edit');
+  const hasActiveFilters = !!(search || country);
+  const clearFilters = () => { setSearch(''); setCountry(''); };
+  const { pageRows, paginationProps } = usePagination(rows);
+
   return (
-    <div className="app-content">
-      <header className="page-header">
-        <div className="page-header__main">
-          <h1 className="page-header__title">Legal entities</h1>
-          <p className="page-header__subtitle">Companies in the group</p>
+    <div>
+      {/* ---------- Page header ---------- */}
+      <div className="page-header">
+        <div className="page-header__lead">
+          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-buildings"></i></span>
+          <div className="page-header__text">
+            <h1 className="page-title">Legal entities</h1>
+            <p className="page-subtitle">Companies in the group</p>
+          </div>
         </div>
         <div className="page-header__actions">
-          {isGroupAdmin && can('company.edit') && (
-            <button className="btn btn-primary" onClick={openNew}>
-              <i className="bi bi-plus-lg" /> New company
+          {isAdmin && canEdit && (
+            <button className="btn btn-primary" onClick={() => setEditing({ ...EMPTY })}>
+              <i className="bi bi-plus-lg"></i>
+              New company
             </button>
           )}
         </div>
-      </header>
+      </div>
 
-      <div className={`table-card ${loading ? 'is-loading' : ''}`}>
-        <div className="filters">
-          <div className="input-group">
-            <span className="input-icon"><i className="bi bi-search" /></span>
-            <input className="input" placeholder="Search code or name…" value={search} onChange={(e) => setSearch(e.target.value)} />
+      {error && (
+        <div className="alert alert-danger" role="alert">
+          <span style={{ flex: 1 }}>{error}</span>
+          <button type="button" className="btn btn-sm btn-outline-danger" onClick={load}>Try again</button>
+        </div>
+      )}
+
+      <section className="page-card">
+        <div className="search-bar">
+          <div className="search-bar__field">
+            <i className="bi bi-search" aria-hidden="true"></i>
+            <input
+              type="text"
+              className="form-control"
+              placeholder="Search by code or name..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="Search companies"
+            />
+            {search && (
+              <button type="button" className="search-bar__clear" onClick={() => setSearch('')} aria-label="Clear search">
+                <i className="bi bi-x-lg"></i>
+              </button>
+            )}
           </div>
-          <div className="filters__spacer" />
-          <span className="text-sm text-muted">{rows.length} entit{rows.length === 1 ? 'y' : 'ies'}</span>
+          <select className="form-select" value={country} onChange={(e) => setCountry(e.target.value)} aria-label="Country">
+            <option value="">All countries</option>
+            {Object.entries(COUNTRIES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+          {hasActiveFilters && (
+            <button className="btn btn-secondary" onClick={clearFilters}>
+              <i className="bi bi-x-lg"></i> Clear
+            </button>
+          )}
         </div>
 
-        {error ? (
-          <div className="card__body">
-            <p className="field-error" role="alert">{error}</p>
-            <button className="btn mt-2" onClick={load}>Try again</button>
+        {hasActiveFilters && (
+          <div className="chip-row">
+            {search && (
+              <span className="filter-chip">
+                Search: "{search}"
+                <button onClick={() => setSearch('')}><i className="bi bi-x"></i></button>
+              </span>
+            )}
+            {country && (
+              <span className="filter-chip">
+                Country: {COUNTRIES[country]}
+                <button onClick={() => setCountry('')}><i className="bi bi-x"></i></button>
+              </span>
+            )}
           </div>
-        ) : !rows.length && !loading ? (
-          <div className="table-empty">
-            <div className="table-empty__title">No companies yet</div>
-            <div>Create the first legal entity to get started.</div>
+        )}
+
+        <div className="table-wrap__header" style={{ borderTop: '1px solid var(--border-color)' }}>
+          <span className="panel-title">
+            <i className="bi bi-list-ul text-brand"></i>
+            Company List
+          </span>
+          <span className="chart-card__subtitle">
+            {rows.length} entit{rows.length === 1 ? 'y' : 'ies'}
+          </span>
+        </div>
+
+        {loading ? (
+          <TableSkeleton rows={6} columns={7} />
+        ) : rows.length === 0 ? (
+          <div className="empty-state">
+            <i className="bi bi-buildings"></i>
+            <h6>{hasActiveFilters ? 'No companies match your search' : 'No companies yet'}</h6>
+            <p className="text-muted-soft">
+              {hasActiveFilters ? 'Try adjusting your search or filters' : 'Create the first legal entity to get started'}
+            </p>
           </div>
         ) : (
           <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Code</th><th>Name</th><th>Country</th><th>Currency</th>
-                  <th>Valuation</th><th>Status</th><th className="col-actions" />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((c) => (
-                  <tr key={c.id} className="is-clickable" onClick={() => openEdit(c)}>
-                    <td className="mono">{c.code}</td>
-                    <td>{c.name}</td>
-                    <td>{c.country}</td>
-                    <td>{c.functional_currency_label || c.functional_currency}</td>
-                    <td>{c.inventory_valuation}</td>
-                    <td>
-                      <span className={`status ${c.is_active ? 'status-active' : 'status-inactive'}`}>
-                        {c.is_active ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
-                    <td className="col-actions" onClick={(e) => e.stopPropagation()}>
-                      {can('company.edit') && (
-                        <div className="row-actions">
-                          <button className="row-action" title="Edit" onClick={() => openEdit(c)}><i className="bi bi-pencil" /></button>
-                          {isGroupAdmin && (
-                            <button className="row-action row-action--danger" title="Delete" onClick={() => remove(c)}><i className="bi bi-trash" /></button>
-                          )}
-                        </div>
-                      )}
-                    </td>
+            <div className="table-responsive">
+              <table className="table table-hover mb-0">
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th>Name</th>
+                    <th>Country</th>
+                    <th>Currency</th>
+                    <th>Valuation</th>
+                    <th>Status</th>
+                    <th className="text-center" style={{ width: '7rem' }}>Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {pageRows.map((c) => (
+                    <tr key={c.id} style={{ cursor: canEdit ? 'pointer' : undefined }} onClick={() => canEdit && setEditing({ ...c })}>
+                      <td className="cell-mono text-brand fw-600">{c.code}</td>
+                      <td className="cell-name">{c.name}</td>
+                      <td>{COUNTRIES[c.country] || c.country}</td>
+                      <td>{c.functional_currency_label || c.functional_currency}</td>
+                      <td>{c.inventory_valuation}</td>
+                      <td>
+                        <span className={`status-pill ${c.is_active ? 'status-pill--success' : 'status-pill--neutral'}`}>
+                          {c.is_active ? 'ACTIVE' : 'INACTIVE'}
+                        </span>
+                      </td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        {canEdit && (
+                          <div className="row-actions">
+                            <button className="btn btn-icon" title="Edit" aria-label="Edit" onClick={() => setEditing({ ...c })}>
+                              <i className="bi bi-pencil"></i>
+                            </button>
+                            {isAdmin && (
+                              <button className="btn btn-icon" title="Delete" aria-label="Delete" onClick={() => remove(c)}>
+                                <i className="bi bi-trash"></i>
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
-      </div>
+
+        {!loading && rows.length > 0 && <Pagination {...paginationProps} />}
+      </section>
 
       {editing && (
         <CompanyModal
@@ -158,81 +232,95 @@ function CompanyModal({ company, currencies, onClose, onSaved }) {
     try {
       const body = { ...form };
       if (body.functional_currency && typeof body.functional_currency === 'object') body.functional_currency = body.functional_currency.id;
-      if (isNew) await api.companies.create(body);
-      else await api.companies.update(company.id, body);
+      ['min_margin_pct', 'delivery_loss_tolerance_pct'].forEach((k) => { if (body[k] === '') body[k] = 0; });
+      isNew ? await api.companies.create(body) : await api.companies.update(company.id, body);
       onSaved();
-    } catch (err) {
-      setError(errorMessage(err)); setFieldErr(fieldErrors(err));
-    } finally { setBusy(false); }
+    } catch (err) { setError(errorMessage(err)); setFieldErr(fieldErrors(err)); }
+    finally { setBusy(false); }
   };
 
   return (
-    <div className="modal" role="dialog" aria-modal="true">
-      <div className="modal__dialog modal__dialog--lg">
-        <div className="modal__header">
-          <div>
-            <h2 className="modal__title">{isNew ? 'New company' : `Edit ${company.code}`}</h2>
-            <p className="modal__subtitle">Legal entity details</p>
-          </div>
-          <button className="modal__close" onClick={onClose} aria-label="Close"><i className="bi bi-x-lg" /></button>
+    <Modal
+      show
+      onClose={onClose}
+      title={isNew ? 'New company' : `Edit ${company.code}`}
+      subtitle="Legal entity details"
+      icon="bi-buildings"
+      size="lg"
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" type="submit" form="companyForm" disabled={busy}>
+            <i className="bi bi-save"></i>
+            {busy ? 'Saving...' : 'Save'}
+          </button>
+        </>
+      }
+    >
+      <form id="companyForm" onSubmit={submit}>
+        <h6 className="modal-section-title"><i className="bi bi-card-text" aria-hidden="true"></i>Company Details</h6>
+        <div className="form-grid">
+          <Field label="Code" required err={fieldErr.code}>
+            <input className="form-control font-mono" value={form.code} onChange={set('code')} required maxLength={10} disabled={!isNew} />
+          </Field>
+          <Field label="Name" required err={fieldErr.name}>
+            <input className="form-control" value={form.name} onChange={set('name')} required />
+          </Field>
+          <Field label="Country" err={fieldErr.country}>
+            <select className="form-select" value={form.country} onChange={set('country')}>
+              {Object.entries(COUNTRIES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </Field>
+          <Field label="Functional currency" required err={fieldErr.functional_currency}>
+            <select className="form-select" value={form.functional_currency || ''} onChange={set('functional_currency')} required>
+              <option value="">—</option>
+              {currencies.map((c) => <option key={c.code} value={c.code}>{c.code} · {c.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Tax PIN" err={fieldErr.tax_pin}>
+            <input className="form-control" value={form.tax_pin} onChange={set('tax_pin')} />
+          </Field>
+          <Field label="Registration number" err={fieldErr.registration_number}>
+            <input className="form-control" value={form.registration_number} onChange={set('registration_number')} />
+          </Field>
+          <Field label="Phone" err={fieldErr.phone}>
+            <input className="form-control" value={form.phone} onChange={set('phone')} />
+          </Field>
+          <Field label="Email" err={fieldErr.email}>
+            <input type="email" className="form-control" value={form.email} onChange={set('email')} />
+          </Field>
+          <Field label="Address" span>
+            <textarea className="form-control" rows={2} value={form.address} onChange={set('address')} />
+          </Field>
         </div>
-        <form onSubmit={submit}>
-          <div className="modal__body">
-            <div className="form-grid">
-              <Field label="Code" required err={fieldErr.code}>
-                <input className="input mono" value={form.code} onChange={set('code')} required maxLength={10} disabled={!isNew} />
-              </Field>
-              <Field label="Name" required err={fieldErr.name}>
-                <input className="input" value={form.name} onChange={set('name')} required />
-              </Field>
-              <Field label="Country">
-                <select className="select" value={form.country} onChange={set('country')}>
-                  <option value="KE">Kenya</option>
-                  <option value="CD">DR Congo</option>
-                </select>
-              </Field>
-              <Field label="Functional currency" required err={fieldErr.functional_currency}>
-                <select className="select" value={form.functional_currency || ''} onChange={set('functional_currency')} required>
-                  <option value="">—</option>
-                  {currencies.map((c) => <option key={c.code} value={c.code}>{c.code} · {c.name}</option>)}
-                </select>
-              </Field>
-              <Field label="Tax PIN"><input className="input" value={form.tax_pin} onChange={set('tax_pin')} /></Field>
-              <Field label="Registration number"><input className="input" value={form.registration_number} onChange={set('registration_number')} /></Field>
-              <Field label="Phone"><input className="input" value={form.phone} onChange={set('phone')} /></Field>
-              <Field label="Email"><input type="email" className="input" value={form.email} onChange={set('email')} /></Field>
-              <Field label="Address" span><textarea className="textarea" rows={2} value={form.address} onChange={set('address')} /></Field>
-              <Field label="Inventory valuation">
-                <select className="select" value={form.inventory_valuation} onChange={set('inventory_valuation')}>
-                  <option value="WAVG">Weighted average</option>
-                  <option value="FIFO">FIFO</option>
-                </select>
-              </Field>
-              <Field label="Min. margin %"><input type="number" step="0.001" className="input" value={form.min_margin_pct} onChange={set('min_margin_pct')} /></Field>
-              <Field label="Match tolerance %"><input type="number" step="0.001" className="input" value={form.match_tolerance_pct} onChange={set('match_tolerance_pct')} /></Field>
-              <Field label="Delivery loss tolerance %"><input type="number" step="0.001" className="input" value={form.delivery_loss_tolerance_pct} onChange={set('delivery_loss_tolerance_pct')} /></Field>
-              <Field label="Active" span>
-                <label className="check"><input type="checkbox" checked={!!form.is_active} onChange={set('is_active')} /> Company is active</label>
-              </Field>
-            </div>
-            {error && <p className="field-error mt-3" role="alert">{error}</p>}
-          </div>
-          <div className="modal__footer">
-            <button type="button" className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
 
-function Field({ label, required, err, span, children }) {
-  return (
-    <div className={`field ${span ? 'span-all' : ''} ${err ? 'has-error' : ''}`}>
-      <label className={`label ${required ? 'label--required' : ''}`}>{label}</label>
-      {children}
-      {err && <span className="field-error">{err}</span>}
-    </div>
+        <h6 className="modal-section-title"><i className="bi bi-sliders" aria-hidden="true"></i>Controls & Tolerances</h6>
+        <div className="form-grid">
+          <Field label="Inventory valuation">
+            <select className="form-select" value={form.inventory_valuation} onChange={set('inventory_valuation')}>
+              <option value="WAVG">Weighted average</option>
+              <option value="FIFO">FIFO</option>
+            </select>
+          </Field>
+          <Field label="Min. margin %" err={fieldErr.min_margin_pct}>
+            <input type="number" step="0.001" className="form-control num" value={form.min_margin_pct} onChange={set('min_margin_pct')} />
+          </Field>
+          <Field label="Match tolerance %" err={fieldErr.match_tolerance_pct}>
+            <input type="number" step="0.001" className="form-control num" value={form.match_tolerance_pct} onChange={set('match_tolerance_pct')} />
+          </Field>
+          <Field label="Delivery loss tolerance %" err={fieldErr.delivery_loss_tolerance_pct}>
+            <input type="number" step="0.001" className="form-control num" value={form.delivery_loss_tolerance_pct} onChange={set('delivery_loss_tolerance_pct')} />
+          </Field>
+          <Field label="Status" span>
+            <div className="form-check">
+              <input className="form-check-input" type="checkbox" id="co-active" checked={!!form.is_active} onChange={set('is_active')} />
+              <label className="form-check-label" htmlFor="co-active">Company is active</label>
+            </div>
+          </Field>
+        </div>
+
+        {error && <div className="alert alert-danger mt-3" role="alert">{error}</div>}
+      </form>
+    </Modal>
   );
 }

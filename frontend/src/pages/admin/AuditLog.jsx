@@ -5,13 +5,18 @@
  *
  * Audit log entries are immutable and hash-chained: each row hashes the previous hash.
  * Any tampering (or re-ordered rows) shows up in the verify endpoint.
+ * Paging is server-side (50 per page), so this page keeps its own pager.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import api, { errorMessage } from '../../services/api';
+import Modal from '../../components/Modal';
+import TableSkeleton from '../../components/TableSkeleton';
+
+const PAGE_SIZE = 50;
 
 const ACTIONS = [
-  '', 'LOGIN', 'CREATE', 'UPDATE', 'DELETE', 'POST_JOURNAL', 'REVERSE_JOURNAL',
+  'LOGIN', 'CREATE', 'UPDATE', 'DELETE', 'POST_JOURNAL', 'REVERSE_JOURNAL',
   'SUBMIT_APPROVAL', 'APPROVAL_APPROVED', 'APPROVAL_REJECTED',
   'POST_PAYMENT', 'APPROVE_PAYMENT', 'POST_EXPENSE', 'POST_PURCHASE_INVOICE',
   'POST_SALES_INVOICE', 'SHIPMENT_STATUS', 'RECEIVE_GOODS', 'FINAL_COST_SHEET',
@@ -46,8 +51,9 @@ export default function AuditLog() {
         ...(action ? { action } : {}),
         ...(model ? { model_name: model } : {}),
       });
-      setRows(res?.results || res || []);
-      setCount(res?.count ?? (res?.results || []).length);
+      const items = res?.results || res || [];
+      setRows(items);
+      setCount(res?.count ?? items.length);
     } catch (err) { setError(errorMessage(err)); }
     finally { setLoading(false); }
   }, [companyParams, page, search, action, model]);
@@ -65,141 +71,212 @@ export default function AuditLog() {
     finally { setChainBusy(false); }
   };
 
+  const hasActiveFilters = !!(search || action || model);
+  const clearFilters = () => { setSearch(''); setAction(''); setModel(''); };
+  const pages = Math.max(1, Math.ceil((count || 0) / PAGE_SIZE));
+
   return (
-    <div className="app-content">
-      <header className="page-header">
-        <div className="page-header__main">
-          <h1 className="page-header__title">Audit log</h1>
-          <p className="page-header__subtitle">Append-only, hash-chained history of every change</p>
+    <div>
+      {/* ---------- Page header ---------- */}
+      <div className="page-header">
+        <div className="page-header__lead">
+          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-journal-check"></i></span>
+          <div className="page-header__text">
+            <h1 className="page-title">Audit log</h1>
+            <p className="page-subtitle">Append-only, hash-chained history of every change</p>
+          </div>
         </div>
         <div className="page-header__actions">
-          <button className="btn" onClick={verifyChain} disabled={chainBusy}>
-            {chainBusy ? 'Verifying…' : 'Verify chain'}
+          <button className="btn btn-secondary" onClick={load} disabled={loading}>
+            <i className="bi bi-arrow-clockwise"></i>
+            Refresh
           </button>
-          <button className="btn" onClick={load} disabled={loading}>Refresh</button>
+          <button className="btn btn-primary" onClick={verifyChain} disabled={chainBusy}>
+            <i className="bi bi-shield-check"></i>
+            {chainBusy ? 'Verifying...' : 'Verify chain'}
+          </button>
         </div>
-      </header>
+      </div>
 
-      {chain && (
-        <div className={`card mb-4`}>
-          <div className="card__body">
-            <div className="d-flex items-center gap-3">
-              <span className={`badge ${chain.ok ? 'badge--success' : 'badge--danger'}`}>
-                {chain.ok ? 'OK · untampered' : 'Tampered'}
-              </span>
-              {!chain.ok && (
-                <span className="text-sm text-muted">Rows: {chain.tampered_ids.join(', ')}</span>
-              )}
-            </div>
-          </div>
+      {error && (
+        <div className="alert alert-danger" role="alert">
+          <span style={{ flex: 1 }}>{error}</span>
+          <button type="button" className="btn btn-sm btn-outline-danger" onClick={load}>Try again</button>
         </div>
       )}
 
-      <div className={`table-card ${loading ? 'is-loading' : ''}`}>
-        <div className="filters">
-          <div className="input-group">
-            <span className="input-icon"><i className="bi bi-search" /></span>
-            <input className="input" placeholder="Search object, id, action…" value={search} onChange={(e) => setSearch(e.target.value)} />
+      {chain && (
+        <div className={`alert ${chain.ok ? 'alert-success' : 'alert-danger'}`} role="status">
+          <i className={`bi ${chain.ok ? 'bi-shield-check' : 'bi-exclamation-octagon'}`} aria-hidden="true"></i>
+          <span style={{ flex: 1 }}>
+            {chain.ok
+              ? 'Chain verified: no entries have been altered or re-ordered.'
+              : `Tampering detected in row(s): ${chain.tampered_ids.join(', ')}`}
+          </span>
+        </div>
+      )}
+
+      <section className="page-card">
+        <div className="search-bar">
+          <div className="search-bar__field">
+            <i className="bi bi-search" aria-hidden="true"></i>
+            <input
+              type="text"
+              className="form-control"
+              placeholder="Search object, id, action..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="Search audit log"
+            />
+            {search && (
+              <button type="button" className="search-bar__clear" onClick={() => setSearch('')} aria-label="Clear search">
+                <i className="bi bi-x-lg"></i>
+              </button>
+            )}
           </div>
-          <select className="select" value={action} onChange={(e) => setAction(e.target.value)}>
-            {ACTIONS.map((a) => <option key={a} value={a}>{a || 'All actions'}</option>)}
+          <select className="form-select" value={action} onChange={(e) => setAction(e.target.value)} aria-label="Action">
+            <option value="">All actions</option>
+            {ACTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
           </select>
-          <input className="input" placeholder="Model name (e.g. PurchaseOrder)"
-                 value={model} onChange={(e) => setModel(e.target.value)} style={{ width: 220 }} />
-          <div className="filters__spacer" />
-          <span className="text-sm text-muted">{count} entries</span>
+          <input
+            type="text"
+            className="form-control"
+            style={{ maxWidth: 220 }}
+            placeholder="Model (e.g. PurchaseOrder)"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            aria-label="Model name"
+          />
+          {hasActiveFilters && (
+            <button className="btn btn-secondary" onClick={clearFilters}>
+              <i className="bi bi-x-lg"></i> Clear
+            </button>
+          )}
         </div>
 
-        {error ? (
-          <div className="card__body">
-            <p className="field-error" role="alert">{error}</p>
-            <button className="btn mt-2" onClick={load}>Try again</button>
-          </div>
-        ) : !rows.length && !loading ? (
-          <div className="table-empty">
-            <div className="table-empty__title">No entries</div>
-            <div>Change the filters above.</div>
-          </div>
-        ) : (
-          <div className="table-wrap">
-            <table className="table table--compact">
-              <thead><tr>
-                <th>When</th><th>User</th><th>Action</th><th>Model</th><th>Object</th><th>IP</th><th className="col-actions" />
-              </tr></thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id} className="is-clickable" onClick={() => setDetails(r)}>
-                    <td className="text-sm text-muted">{fmtDateTime(r.created_at)}</td>
-                    <td>{r.user_label || r.user || '—'}</td>
-                    <td><span className="badge">{r.action}</span></td>
-                    <td className="mono">{r.model_name}</td>
-                    <td className="text-truncate" style={{ maxWidth: 260 }}>{r.object_repr || `#${r.object_id}`}</td>
-                    <td className="text-sm text-muted">{r.ip_address || '—'}</td>
-                    <td className="col-actions">
-                      <button className="row-action" onClick={(e) => { e.stopPropagation(); setDetails(r); }} title="Details">
-                        <i className="bi bi-eye" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {hasActiveFilters && (
+          <div className="chip-row">
+            {search && (
+              <span className="filter-chip">
+                Search: "{search}"
+                <button onClick={() => setSearch('')}><i className="bi bi-x"></i></button>
+              </span>
+            )}
+            {action && (
+              <span className="filter-chip">
+                Action: {action}
+                <button onClick={() => setAction('')}><i className="bi bi-x"></i></button>
+              </span>
+            )}
+            {model && (
+              <span className="filter-chip">
+                Model: {model}
+                <button onClick={() => setModel('')}><i className="bi bi-x"></i></button>
+              </span>
+            )}
           </div>
         )}
 
-        <Pagination page={page} count={count} onChange={setPage} />
-      </div>
+        <div className="table-wrap__header" style={{ borderTop: '1px solid var(--border-color)' }}>
+          <span className="panel-title">
+            <i className="bi bi-list-ul text-brand"></i>
+            Audit Entries
+          </span>
+          <span className="chart-card__subtitle">{count} entr{count === 1 ? 'y' : 'ies'}</span>
+        </div>
 
-      {details && (
-        <div className="modal" role="dialog" aria-modal="true" onClick={() => setDetails(null)}>
-          <div className="modal__dialog modal__dialog--lg" onClick={(e) => e.stopPropagation()}>
-            <div className="modal__header">
-              <div>
-                <h2 className="modal__title">{details.action} · {details.model_name}</h2>
-                <p className="modal__subtitle">{details.object_repr || `#${details.object_id}`}</p>
-              </div>
-              <button className="modal__close" onClick={() => setDetails(null)} aria-label="Close"><i className="bi bi-x-lg" /></button>
-            </div>
-            <div className="modal__body">
-              <div className="kv">
-                <div className="kv__item"><div className="kv__label">When</div><div className="kv__value">{fmtDateTime(details.created_at)}</div></div>
-                <div className="kv__item"><div className="kv__label">User</div><div className="kv__value">{details.user_label || details.user || '—'}</div></div>
-                <div className="kv__item"><div className="kv__label">Model</div><div className="kv__value mono">{details.model_name}</div></div>
-                <div className="kv__item"><div className="kv__label">Object id</div><div className="kv__value mono">{details.object_id}</div></div>
-                <div className="kv__item"><div className="kv__label">IP</div><div className="kv__value">{details.ip_address || '—'}</div></div>
-                <div className="kv__item"><div className="kv__label">Hash</div><div className="kv__value mono text-xs text-break">{details.hash}</div></div>
-              </div>
-              {details.changes && Object.keys(details.changes).length > 0 && (
-                <>
-                  <hr className="divider" />
-                  <h3 className="h5 mb-2">Changes</h3>
-                  <pre className="text-sm" style={{ maxHeight: 320, overflow: 'auto' }}>
-                    {JSON.stringify(details.changes, null, 2)}
-                  </pre>
-                </>
-              )}
-            </div>
-            <div className="modal__footer">
-              <button className="btn" onClick={() => setDetails(null)}>Close</button>
+        {loading ? (
+          <TableSkeleton rows={10} columns={7} />
+        ) : rows.length === 0 ? (
+          <div className="empty-state">
+            <i className="bi bi-journal-x"></i>
+            <h6>No entries found</h6>
+            <p className="text-muted-soft">Try adjusting your search or filters</p>
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <div className="table-responsive">
+              <table className="table table-hover mb-0">
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>User</th>
+                    <th>Action</th>
+                    <th>Model</th>
+                    <th>Object</th>
+                    <th>IP</th>
+                    <th className="text-center" style={{ width: '5rem' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => setDetails(r)}>
+                      <td>{fmtDateTime(r.created_at)}</td>
+                      <td>{r.user_label || r.user || '—'}</td>
+                      <td><span className="badge badge-neutral">{r.action}</span></td>
+                      <td className="cell-mono">{r.model_name}</td>
+                      <td className="cell-name" style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {r.object_repr || `#${r.object_id}`}
+                      </td>
+                      <td>{r.ip_address || '—'}</td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <div className="row-actions">
+                          <button className="btn btn-icon" title="Details" aria-label="Details" onClick={() => setDetails(r)}>
+                            <i className="bi bi-eye"></i>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
+        )}
 
-function Pagination({ page, count, onChange, size = 50 }) {
-  const pages = Math.max(1, Math.ceil((count || 0) / size));
-  if (count <= size) return null;
-  return (
-    <div className="pagination pagination--bordered">
-      <span className="pagination__info">Page <strong>{page}</strong> of <strong>{pages}</strong> · {count} entries</span>
-      <div className="pagination__list">
-        <button className="pagination__btn" disabled={page <= 1} onClick={() => onChange(page - 1)}>Prev</button>
-        <button className="pagination__btn active">{page}</button>
-        <button className="pagination__btn" disabled={page >= pages} onClick={() => onChange(page + 1)}>Next</button>
-      </div>
+        {count > PAGE_SIZE && (
+          <div className="pagination pagination--bordered">
+            <span className="pagination__info">
+              Page <strong>{page}</strong> of <strong>{pages}</strong> · {count} entries
+            </span>
+            <div className="pagination__list">
+              <button className="pagination__btn" disabled={page <= 1} onClick={() => setPage(page - 1)}>Prev</button>
+              <button className="pagination__btn active">{page}</button>
+              <button className="pagination__btn" disabled={page >= pages} onClick={() => setPage(page + 1)}>Next</button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {details && (
+        <Modal
+          show
+          onClose={() => setDetails(null)}
+          title={`${details.action} · ${details.model_name}`}
+          subtitle={details.object_repr || `#${details.object_id}`}
+          icon="bi-journal-check"
+          size="lg"
+          footer={<button type="button" className="btn btn-secondary" onClick={() => setDetails(null)}>Close</button>}
+        >
+          <h6 className="modal-section-title"><i className="bi bi-info-circle" aria-hidden="true"></i>Entry</h6>
+          <div className="kv">
+            <div className="kv__item"><div className="kv__label">When</div><div className="kv__value">{fmtDateTime(details.created_at)}</div></div>
+            <div className="kv__item"><div className="kv__label">User</div><div className="kv__value">{details.user_label || details.user || '—'}</div></div>
+            <div className="kv__item"><div className="kv__label">Model</div><div className="kv__value cell-mono">{details.model_name}</div></div>
+            <div className="kv__item"><div className="kv__label">Object id</div><div className="kv__value cell-mono">{details.object_id}</div></div>
+            <div className="kv__item"><div className="kv__label">IP</div><div className="kv__value">{details.ip_address || '—'}</div></div>
+            <div className="kv__item"><div className="kv__label">Hash</div><div className="kv__value cell-mono" style={{ wordBreak: 'break-all', fontSize: '0.75rem' }}>{details.hash}</div></div>
+          </div>
+          {details.changes && Object.keys(details.changes).length > 0 && (
+            <>
+              <h6 className="modal-section-title"><i className="bi bi-braces" aria-hidden="true"></i>Changes</h6>
+              <pre style={{ maxHeight: 320, overflow: 'auto', fontSize: '0.8rem' }}>
+                {JSON.stringify(details.changes, null, 2)}
+              </pre>
+            </>
+          )}
+        </Modal>
+      )}
     </div>
   );
 }

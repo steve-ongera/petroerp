@@ -4,11 +4,16 @@
  * - POST  /tax-configs/:id/verify  Professional verification (different user, server-enforced)
  *
  * Rule from services.get_tax_rate: only verified + active + effective configs are used when
- * calculating line tax, so we surface verification state prominently.
+ * calculating line tax, so verification state is surfaced prominently.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { useAuth, useApp } from '../../context/AppContext';
+import { useApp } from '../../context/AppContext';
+import { useAccess } from '../../utils/access';
 import api, { errorMessage, fieldErrors } from '../../services/api';
+import Modal from '../../components/Modal';
+import Field from '../../components/Field';
+import Pagination, { usePagination } from '../../components/Pagination';
+import TableSkeleton from '../../components/TableSkeleton';
 
 const TYPES = ['VAT', 'EXCISE', 'DUTY', 'LEVY', 'WHT', 'OTHER'];
 const EMPTY = {
@@ -20,7 +25,7 @@ const EMPTY = {
 const verified = (t) => !!t.verified_at;
 
 export default function TaxConfigs() {
-  const { user, can } = useAuth();
+  const { user, can } = useAccess();
   const { companyParams, activeCompanyObj, notify } = useApp();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -60,121 +65,182 @@ export default function TaxConfigs() {
     catch (err) { notify(errorMessage(err), 'error'); }
   };
 
+  const hasActiveFilters = !!(search || typeFilter);
+  const clearFilters = () => { setSearch(''); setTypeFilter(''); };
+  const { pageRows, paginationProps } = usePagination(rows);
+
   return (
-    <div className="app-content">
-      <header className="page-header">
-        <div className="page-header__main">
-          <h1 className="page-header__title">Tax configuration</h1>
-          <p className="page-header__subtitle">
-            Effective-dated, professionally verified rates
-            {activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
-          </p>
+    <div>
+      {/* ---------- Page header ---------- */}
+      <div className="page-header">
+        <div className="page-header__lead">
+          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-percent"></i></span>
+          <div className="page-header__text">
+            <h1 className="page-title">Tax configuration</h1>
+            <p className="page-subtitle">
+              Effective-dated, professionally verified rates{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
+            </p>
+          </div>
         </div>
         <div className="page-header__actions">
           {canEdit && (
             <button className="btn btn-primary" onClick={() => setEditing({ ...EMPTY })}>
-              <i className="bi bi-plus-lg" /> New tax code
+              <i className="bi bi-plus-lg"></i>
+              New tax code
             </button>
           )}
         </div>
-      </header>
-
-      <div className="card mb-4">
-        <div className="card__body card__body--tight">
-          <p className="text-sm text-muted">
-            A tax code can only be used in calculations once it has been verified by a user other than its creator,
-            and while today's date is inside its effective range.
-          </p>
-        </div>
       </div>
 
-      <div className={`table-card ${loading ? 'is-loading' : ''}`}>
-        <div className="filters">
-          <div className="input-group">
-            <span className="input-icon"><i className="bi bi-search" /></span>
-            <input className="input" placeholder="Search code or name…" value={search} onChange={(e) => setSearch(e.target.value)} />
+      {error && (
+        <div className="alert alert-danger" role="alert">
+          <span style={{ flex: 1 }}>{error}</span>
+          <button type="button" className="btn btn-sm btn-outline-danger" onClick={load}>Try again</button>
+        </div>
+      )}
+
+      <div className="alert alert-info" role="note">
+        <i className="bi bi-info-circle" aria-hidden="true"></i>
+        <span style={{ flex: 1 }}>
+          A tax code is only used in calculations once a user other than its creator has verified it,
+          and while today's date is inside its effective range.
+        </span>
+      </div>
+
+      {/* ---------- One white card ---------- */}
+      <section className="page-card">
+        <div className="search-bar">
+          <div className="search-bar__field">
+            <i className="bi bi-search" aria-hidden="true"></i>
+            <input
+              type="text"
+              className="form-control"
+              placeholder="Search by code or name..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="Search tax codes"
+            />
+            {search && (
+              <button type="button" className="search-bar__clear" onClick={() => setSearch('')} aria-label="Clear search">
+                <i className="bi bi-x-lg"></i>
+              </button>
+            )}
           </div>
-          <select className="select" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+          <select className="form-select" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} aria-label="Tax type">
             <option value="">All types</option>
             {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
-          <div className="filters__spacer" />
-          <span className="text-sm text-muted">{rows.length} code{rows.length === 1 ? '' : 's'}</span>
+          {hasActiveFilters && (
+            <button className="btn btn-secondary" onClick={clearFilters}>
+              <i className="bi bi-x-lg"></i> Clear
+            </button>
+          )}
         </div>
 
-        {error ? (
-          <div className="card__body">
-            <p className="field-error" role="alert">{error}</p>
-            <button className="btn mt-2" onClick={load}>Try again</button>
+        {hasActiveFilters && (
+          <div className="chip-row">
+            {search && (
+              <span className="filter-chip">
+                Search: "{search}"
+                <button onClick={() => setSearch('')}><i className="bi bi-x"></i></button>
+              </span>
+            )}
+            {typeFilter && (
+              <span className="filter-chip">
+                Type: {typeFilter}
+                <button onClick={() => setTypeFilter('')}><i className="bi bi-x"></i></button>
+              </span>
+            )}
           </div>
-        ) : !rows.length && !loading ? (
-          <div className="table-empty">
-            <div className="table-empty__title">No tax codes</div>
-            <div>Add a VAT, excise, duty or levy configuration to start using taxes.</div>
+        )}
+
+        <div className="table-wrap__header" style={{ borderTop: '1px solid var(--border-color)' }}>
+          <span className="panel-title">
+            <i className="bi bi-list-ul text-brand"></i>
+            Tax Codes
+          </span>
+          <span className="chart-card__subtitle">
+            {rows.length} code{rows.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+
+        {loading ? (
+          <TableSkeleton rows={8} columns={8} />
+        ) : rows.length === 0 ? (
+          <div className="empty-state">
+            <i className="bi bi-percent"></i>
+            <h6>{hasActiveFilters ? 'No tax codes match your search' : 'No tax codes yet'}</h6>
+            <p className="text-muted-soft">
+              {hasActiveFilters ? 'Try adjusting your search or filters' : "Click 'New tax code' to add a VAT, excise, duty or levy rate"}
+            </p>
           </div>
         ) : (
           <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Code</th><th>Name</th><th>Type</th><th className="num">Rate %</th>
-                  <th>Effective</th><th>Verification</th><th>Status</th><th className="col-actions" />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((t) => {
-                  const isMine = t.created_by === user?.id;
-                  return (
-                    <tr key={t.id}>
-                      <td className="mono">{t.code}</td>
-                      <td>{t.name}</td>
-                      <td><span className="badge">{t.tax_type}</span></td>
-                      <td className="num">{Number(t.rate_percent).toFixed(3)}</td>
-                      <td className="text-sm">
-                        {t.effective_from}
-                        {t.effective_to ? ` → ${t.effective_to}` : ' →'}
-                      </td>
-                      <td>
-                        {verified(t) ? (
-                          <span className="badge badge--success" title={`${t.verified_by_label || 'verified'}`}>
-                            Verified
+            <div className="table-responsive">
+              <table className="table table-hover mb-0">
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th className="text-right">Rate %</th>
+                    <th>Effective</th>
+                    <th>Verification</th>
+                    <th>Status</th>
+                    <th className="text-center" style={{ width: '10rem' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageRows.map((t) => {
+                    const isMine = t.created_by === user?.id;
+                    return (
+                      <tr key={t.id}>
+                        <td className="cell-mono text-brand fw-600">{t.code}</td>
+                        <td className="cell-name">{t.name}</td>
+                        <td><span className="badge badge-neutral">{t.tax_type}</span></td>
+                        <td className="cell-num">{Number(t.rate_percent).toFixed(3)}</td>
+                        <td>{t.effective_from}{t.effective_to ? ` → ${t.effective_to}` : ' →'}</td>
+                        <td>
+                          <span
+                            className={`status-pill ${verified(t) ? 'status-pill--success' : 'status-pill--warning'}`}
+                            title={verified(t) ? (t.verified_by_label || 'Verified') : 'Awaiting verification'}
+                          >
+                            {verified(t) ? 'VERIFIED' : 'UNVERIFIED'}
                           </span>
-                        ) : (
-                          <span className="badge badge--warning">Unverified</span>
-                        )}
-                      </td>
-                      <td>
-                        <span className={`status ${t.is_active ? 'status-active' : 'status-inactive'}`}>
-                          {t.is_active ? 'Active' : 'Inactive'}
-                        </span>
-                      </td>
-                      <td className="col-actions">
-                        <div className="row-actions">
-                          {canEdit && !verified(t) && !isMine && (
-                            <button className="btn btn-xs btn-soft" onClick={() => verify(t)}>
-                              Verify
-                            </button>
-                          )}
+                        </td>
+                        <td>
+                          <span className={`status-pill ${t.is_active ? 'status-pill--success' : 'status-pill--neutral'}`}>
+                            {t.is_active ? 'ACTIVE' : 'INACTIVE'}
+                          </span>
+                        </td>
+                        <td>
                           {canEdit && (
-                            <>
-                              <button className="row-action" title="Edit" onClick={() => setEditing(t)}>
-                                <i className="bi bi-pencil" />
+                            <div className="row-actions">
+                              {!verified(t) && !isMine && (
+                                <button className="btn btn-icon" title="Verify" aria-label="Verify" onClick={() => verify(t)}>
+                                  <i className="bi bi-patch-check"></i>
+                                </button>
+                              )}
+                              <button className="btn btn-icon" title="Edit" aria-label="Edit" onClick={() => setEditing(t)}>
+                                <i className="bi bi-pencil"></i>
                               </button>
-                              <button className="row-action row-action--danger" title="Delete" onClick={() => remove(t)}>
-                                <i className="bi bi-trash" />
+                              <button className="btn btn-icon" title="Delete" aria-label="Delete" onClick={() => remove(t)}>
+                                <i className="bi bi-trash"></i>
                               </button>
-                            </>
+                            </div>
                           )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
-      </div>
+
+        {!loading && rows.length > 0 && <Pagination {...paginationProps} />}
+      </section>
 
       {editing && (
         <TaxModal
@@ -207,69 +273,68 @@ function TaxModal({ row, companyParams, onClose, onSaved }) {
       if (!body.effective_to) body.effective_to = null;
       isNew ? await api.taxConfigs.create(body) : await api.taxConfigs.update(row.id, body);
       onSaved();
-    } catch (err) {
-      setError(errorMessage(err)); setFieldErr(fieldErrors(err));
-    } finally { setBusy(false); }
+    } catch (err) { setError(errorMessage(err)); setFieldErr(fieldErrors(err)); }
+    finally { setBusy(false); }
   };
 
   return (
-    <div className="modal" role="dialog" aria-modal="true">
-      <div className="modal__dialog">
-        <div className="modal__header">
-          <h2 className="modal__title">{isNew ? 'New tax code' : `Edit ${row.code}`}</h2>
-          <button className="modal__close" onClick={onClose} aria-label="Close"><i className="bi bi-x-lg" /></button>
+    <Modal
+      show
+      onClose={onClose}
+      title={isNew ? 'New tax code' : `Edit ${row.code}`}
+      subtitle="A different user must verify it before use"
+      icon="bi-percent"
+      size="lg"
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" type="submit" form="taxForm" disabled={busy}>
+            <i className="bi bi-save"></i>
+            {busy ? 'Saving...' : 'Save'}
+          </button>
+        </>
+      }
+    >
+      <form id="taxForm" onSubmit={submit}>
+        <h6 className="modal-section-title"><i className="bi bi-card-text" aria-hidden="true"></i>Tax Details</h6>
+        <div className="form-grid">
+          <Field label="Code" required err={fieldErr.code}>
+            <input className="form-control font-mono" value={form.code} onChange={set('code')} required disabled={!isNew} />
+          </Field>
+          <Field label="Name" required err={fieldErr.name}>
+            <input className="form-control" value={form.name} onChange={set('name')} required />
+          </Field>
+          <Field label="Type" required>
+            <select className="form-select" value={form.tax_type} onChange={set('tax_type')} required>
+              {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </Field>
+          <Field label="Rate %" required err={fieldErr.rate_percent}>
+            <input type="number" step="0.001" className="form-control num" value={form.rate_percent} onChange={set('rate_percent')} required />
+          </Field>
         </div>
-        <form onSubmit={submit}>
-          <div className="modal__body">
-            <div className="form-grid">
-              <Field label="Code" required err={fieldErr.code}>
-                <input className="input mono" value={form.code} onChange={set('code')} required disabled={!isNew} />
-              </Field>
-              <Field label="Name" required err={fieldErr.name}>
-                <input className="input" value={form.name} onChange={set('name')} required />
-              </Field>
-              <Field label="Type" required>
-                <select className="select" value={form.tax_type} onChange={set('tax_type')} required>
-                  {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </Field>
-              <Field label="Rate %" required err={fieldErr.rate_percent}>
-                <input type="number" step="0.001" className="input num" value={form.rate_percent} onChange={set('rate_percent')} required />
-              </Field>
-              <Field label="Effective from" required>
-                <input type="date" className="input" value={form.effective_from} onChange={set('effective_from')} required />
-              </Field>
-              <Field label="Effective to">
-                <input type="date" className="input" value={form.effective_to} onChange={set('effective_to')} />
-              </Field>
-              <Field label="Notes" span>
-                <textarea className="textarea" rows={2} value={form.notes} onChange={set('notes')} />
-              </Field>
-              <Field label="Active" span>
-                <label className="check"><input type="checkbox" checked={!!form.is_active} onChange={set('is_active')} /> Active</label>
-              </Field>
-            </div>
-            {error && <p className="field-error mt-3" role="alert">{error}</p>}
-            <p className="field-hint mt-3">
-              A different user must verify this code before it is used in calculations.
-            </p>
-          </div>
-          <div className="modal__footer">
-            <button type="button" className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
 
-function Field({ label, required, err, span, children }) {
-  return (
-    <div className={`field ${span ? 'span-all' : ''} ${err ? 'has-error' : ''}`}>
-      <label className={`label ${required ? 'label--required' : ''}`}>{label}</label>
-      {children}
-      {err && <span className="field-error">{err}</span>}
-    </div>
+        <h6 className="modal-section-title"><i className="bi bi-calendar-range" aria-hidden="true"></i>Validity</h6>
+        <div className="form-grid">
+          <Field label="Effective from" required err={fieldErr.effective_from}>
+            <input type="date" className="form-control" value={form.effective_from} onChange={set('effective_from')} required />
+          </Field>
+          <Field label="Effective to" err={fieldErr.effective_to}>
+            <input type="date" className="form-control" value={form.effective_to} onChange={set('effective_to')} />
+          </Field>
+          <Field label="Notes" span>
+            <textarea className="form-control" rows={2} value={form.notes} onChange={set('notes')} />
+          </Field>
+          <Field label="Status" span>
+            <div className="form-check">
+              <input className="form-check-input" type="checkbox" id="tax-active" checked={!!form.is_active} onChange={set('is_active')} />
+              <label className="form-check-label" htmlFor="tax-active">Active</label>
+            </div>
+          </Field>
+        </div>
+
+        {error && <div className="alert alert-danger mt-3" role="alert">{error}</div>}
+      </form>
+    </Modal>
   );
 }

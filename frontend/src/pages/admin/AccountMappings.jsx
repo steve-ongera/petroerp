@@ -6,9 +6,13 @@
  * These keys are what services.acct(company, key) looks up on every posting
  * (INVENTORY, GRNI, AP, AR, VAT_INPUT, VAT_OUTPUT, COGS, ...).
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import api, { errorMessage, fieldErrors } from '../../services/api';
+import Modal from '../../components/Modal';
+import Field from '../../components/Field';
+import Pagination, { usePagination } from '../../components/Pagination';
+import TableSkeleton from '../../components/TableSkeleton';
 
 const SUGGESTED_KEYS = [
   'INVENTORY', 'INVENTORY_IN_TRANSIT', 'GRNI', 'AP', 'AR',
@@ -18,7 +22,7 @@ const SUGGESTED_KEYS = [
   'IC_RECEIVABLE', 'IC_PAYABLE', 'IC_REVENUE', 'IC_PURCHASES',
   'SALARIES_EXP', 'PAYROLL_PAYABLE', 'STATUTORY_PAYABLE',
   'DEPRECIATION_EXP', 'ACCUM_DEPRECIATION', 'FIXED_ASSETS', 'DISPOSAL_GAIN_LOSS',
-  'FX_UNREALIZED',
+  'FX_UNREALIZED', 'CUSTOMER_ADVANCES', 'SUPPLIER_ADVANCES',
 ];
 
 export default function AccountMappings() {
@@ -50,83 +54,136 @@ export default function AccountMappings() {
     catch (err) { notify(errorMessage(err), 'error'); }
   };
 
-  const filtered = rows.filter((r) => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return r.key.toLowerCase().includes(q) || (r.account_label || '').toLowerCase().includes(q);
-  });
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) => r.key.toLowerCase().includes(q) || (r.account_label || '').toLowerCase().includes(q));
+  }, [rows, search]);
+
+  const { pageRows, paginationProps } = usePagination(filtered);
 
   return (
-    <div className="app-content">
-      <header className="page-header">
-        <div className="page-header__main">
-          <h1 className="page-header__title">Account mappings</h1>
-          <p className="page-header__subtitle">
-            System keys → GL accounts{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
-          </p>
+    <div>
+      {/* ---------- Page header ---------- */}
+      <div className="page-header">
+        <div className="page-header__lead">
+          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-diagram-3"></i></span>
+          <div className="page-header__text">
+            <h1 className="page-title">Account mappings</h1>
+            <p className="page-subtitle">
+              System keys → GL accounts{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
+            </p>
+          </div>
         </div>
         <div className="page-header__actions">
           <button className="btn btn-primary" onClick={() => setEditing({ key: '', account: '' })}>
-            <i className="bi bi-plus-lg" /> New mapping
+            <i className="bi bi-plus-lg"></i>
+            New mapping
           </button>
-        </div>
-      </header>
-
-      <div className="card mb-4">
-        <div className="card__body card__body--tight">
-          <p className="text-sm text-muted">
-            Every posting looks up its account by key. If a key is not mapped, the server raises
-            <code>Account mapping "KEY" is not configured</code> and the whole action is rejected.
-          </p>
         </div>
       </div>
 
-      <div className={`table-card ${loading ? 'is-loading' : ''}`}>
-        <div className="filters">
-          <div className="input-group">
-            <span className="input-icon"><i className="bi bi-search" /></span>
-            <input className="input" placeholder="Search key or account…" value={search} onChange={(e) => setSearch(e.target.value)} />
+      {error && (
+        <div className="alert alert-danger" role="alert">
+          <span style={{ flex: 1 }}>{error}</span>
+          <button type="button" className="btn btn-sm btn-outline-danger" onClick={load}>Try again</button>
+        </div>
+      )}
+
+      <div className="alert alert-info" role="note">
+        <i className="bi bi-info-circle" aria-hidden="true"></i>
+        <span style={{ flex: 1 }}>
+          Every posting looks up its account by key. If a key is not mapped, the server rejects the whole action with
+          {' '}<code>Account mapping "KEY" is not configured</code>.
+        </span>
+      </div>
+
+      <section className="page-card">
+        <div className="search-bar">
+          <div className="search-bar__field">
+            <i className="bi bi-search" aria-hidden="true"></i>
+            <input
+              type="text"
+              className="form-control"
+              placeholder="Search by key or account..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="Search mappings"
+            />
+            {search && (
+              <button type="button" className="search-bar__clear" onClick={() => setSearch('')} aria-label="Clear search">
+                <i className="bi bi-x-lg"></i>
+              </button>
+            )}
           </div>
-          <div className="filters__spacer" />
-          <span className="text-sm text-muted">{filtered.length} mapping{filtered.length === 1 ? '' : 's'}</span>
+          {search && (
+            <button className="btn btn-secondary" onClick={() => setSearch('')}>
+              <i className="bi bi-x-lg"></i> Clear
+            </button>
+          )}
         </div>
 
-        {error ? (
-          <div className="card__body">
-            <p className="field-error" role="alert">{error}</p>
-            <button className="btn mt-2" onClick={load}>Try again</button>
-          </div>
-        ) : !filtered.length && !loading ? (
-          <div className="table-empty">
-            <div className="table-empty__title">No mappings</div>
-            <div>Add at least INVENTORY, AP, AR, GRNI, VAT_INPUT, VAT_OUTPUT, COGS, SALES_REVENUE to start posting.</div>
+        <div className="table-wrap__header" style={{ borderTop: '1px solid var(--border-color)' }}>
+          <span className="panel-title">
+            <i className="bi bi-list-ul text-brand"></i>
+            Mapping List
+          </span>
+          <span className="chart-card__subtitle">
+            {filtered.length} mapping{filtered.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+
+        {loading ? (
+          <TableSkeleton rows={8} columns={4} />
+        ) : filtered.length === 0 ? (
+          <div className="empty-state">
+            <i className="bi bi-diagram-3"></i>
+            <h6>{search ? 'No mappings match your search' : 'No mappings yet'}</h6>
+            <p className="text-muted-soft">
+              {search ? 'Try a different search' : 'Add at least INVENTORY, AP, AR, GRNI, VAT_INPUT, VAT_OUTPUT, COGS and SALES_REVENUE to start posting'}
+            </p>
           </div>
         ) : (
           <div className="table-wrap">
-            <table className="table">
-              <thead><tr><th>Key</th><th>Account</th><th>Type</th><th className="col-actions" /></tr></thead>
-              <tbody>
-                {filtered.map((r) => (
-                  <tr key={r.id}>
-                    <td className="mono">{r.key}</td>
-                    <td>
-                      <span className="cell-main">{r.account_label || '—'}</span>
-                      {r.account_code && <span className="cell-sub mono">{r.account_code}</span>}
-                    </td>
-                    <td>{r.account_type || '—'}</td>
-                    <td className="col-actions">
-                      <div className="row-actions">
-                        <button className="row-action" title="Edit" onClick={() => setEditing(r)}><i className="bi bi-pencil" /></button>
-                        <button className="row-action row-action--danger" title="Remove" onClick={() => remove(r)}><i className="bi bi-trash" /></button>
-                      </div>
-                    </td>
+            <div className="table-responsive">
+              <table className="table table-hover mb-0">
+                <thead>
+                  <tr>
+                    <th>Key</th>
+                    <th>Account</th>
+                    <th>Type</th>
+                    <th className="text-center" style={{ width: '7rem' }}>Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {pageRows.map((r) => (
+                    <tr key={r.id}>
+                      <td className="cell-mono text-brand fw-600">{r.key}</td>
+                      <td className="cell-name">
+                        {r.account_label || '—'}
+                        {r.account_code && <div className="cell-mono text-muted-soft" style={{ fontSize: '0.8rem' }}>{r.account_code}</div>}
+                      </td>
+                      <td>{r.account_type ? <span className="badge badge-neutral">{r.account_type}</span> : '—'}</td>
+                      <td>
+                        <div className="row-actions">
+                          <button className="btn btn-icon" title="Edit" aria-label="Edit" onClick={() => setEditing(r)}>
+                            <i className="bi bi-pencil"></i>
+                          </button>
+                          <button className="btn btn-icon" title="Remove" aria-label="Remove" onClick={() => remove(r)}>
+                            <i className="bi bi-trash"></i>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
-      </div>
+
+        {!loading && filtered.length > 0 && <Pagination {...paginationProps} />}
+      </section>
 
       {editing && (
         <MappingModal
@@ -160,58 +217,52 @@ function MappingModal({ row, accounts, companyParams, onClose, onSaved }) {
   };
 
   return (
-    <div className="modal" role="dialog" aria-modal="true">
-      <div className="modal__dialog">
-        <div className="modal__header">
-          <h2 className="modal__title">{isNew ? 'New mapping' : `Edit ${row.key}`}</h2>
-          <button className="modal__close" onClick={onClose} aria-label="Close"><i className="bi bi-x-lg" /></button>
+    <Modal
+      show
+      onClose={onClose}
+      title={isNew ? 'New mapping' : `Edit ${row.key}`}
+      subtitle="Link a system key to a GL account"
+      icon="bi-diagram-3"
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" type="submit" form="mappingForm" disabled={busy}>
+            <i className="bi bi-save"></i>
+            {busy ? 'Saving...' : 'Save'}
+          </button>
+        </>
+      }
+    >
+      <form id="mappingForm" onSubmit={submit}>
+        <h6 className="modal-section-title"><i className="bi bi-link-45deg" aria-hidden="true"></i>Mapping</h6>
+        <div className="form-grid">
+          <Field label="System key" required err={fieldErr.key} span>
+            <input
+              className="form-control font-mono"
+              list="mapping-keys"
+              value={form.key}
+              onChange={set('key')}
+              placeholder="INVENTORY, AP, AR ..."
+              required
+              disabled={!isNew}
+            />
+            <datalist id="mapping-keys">
+              {SUGGESTED_KEYS.map((k) => <option key={k} value={k} />)}
+            </datalist>
+          </Field>
+          <Field label="Account" required err={fieldErr.account} span>
+            <select className="form-select" value={form.account} onChange={set('account')} required>
+              <option value="">—</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.code} · {a.name} ({a.account_type}{a.is_postable ? '' : ' – not postable'})
+                </option>
+              ))}
+            </select>
+          </Field>
         </div>
-        <form onSubmit={submit}>
-          <div className="modal__body">
-            <div className="form">
-              <Field label="System key" required err={fieldErr.key}>
-                <input
-                  className="input mono"
-                  list="keys"
-                  value={form.key}
-                  onChange={set('key')}
-                  placeholder="INVENTORY, AP, AR …"
-                  required
-                  disabled={!isNew}
-                />
-                <datalist id="keys">
-                  {SUGGESTED_KEYS.map((k) => <option key={k} value={k} />)}
-                </datalist>
-              </Field>
-              <Field label="Account" required err={fieldErr.account}>
-                <select className="select" value={form.account} onChange={set('account')} required>
-                  <option value="">—</option>
-                  {accounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} · {a.name} ({a.account_type}{a.is_postable ? '' : ' – not postable'})
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              {error && <p className="field-error" role="alert">{error}</p>}
-            </div>
-          </div>
-          <div className="modal__footer">
-            <button type="button" className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function Field({ label, required, err, children }) {
-  return (
-    <div className={`field ${err ? 'has-error' : ''}`}>
-      <label className={`label ${required ? 'label--required' : ''}`}>{label}</label>
-      {children}
-      {err && <span className="field-error">{err}</span>}
-    </div>
+        {error && <div className="alert alert-danger mt-3" role="alert">{error}</div>}
+      </form>
+    </Modal>
   );
 }
