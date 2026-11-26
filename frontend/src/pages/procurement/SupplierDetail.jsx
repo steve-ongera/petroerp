@@ -1,7 +1,7 @@
 ﻿/**
  * Supplier detail.
  * - Header: overview + edit / deactivate
- * - Tabs: Statement / Price history / Performance / Contacts
+ * - Tabs: Overview / Statement / Prices / Performance / Contacts
  *
  * Endpoints:
  *   /suppliers/:id/statement/
@@ -10,10 +10,22 @@
  *   /supplier-contacts/ (crud)   + /supplier-contracts/, /supplier-prices/, /supplier-quotations/
  */
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useAuth, useApp } from '../../context/AppContext';
 import api, { errorMessage, fieldErrors } from '../../services/api';
-import { SupplierModal, Field } from './Suppliers';
+import Modal from '../../components/Modal';
+import Field from '../../components/Field';
+import TableSkeleton from '../../components/TableSkeleton';
+import { SectionHeader, SectionBody, KV, EmptyState } from '../../components/PageSection';
+import { SupplierModal, supplierStatusPill } from './Suppliers';
+
+const TABS = [
+  { key: 'overview', label: 'Overview', icon: 'bi-info-circle' },
+  { key: 'statement', label: 'Statement', icon: 'bi-file-text' },
+  { key: 'prices', label: 'Prices', icon: 'bi-tag' },
+  { key: 'performance', label: 'Performance', icon: 'bi-speedometer2' },
+  { key: 'contacts', label: 'Contacts', icon: 'bi-person-lines-fill' },
+];
 
 const fmtMoney = (n, c = '') => {
   if (n == null || n === '') return '—';
@@ -23,9 +35,8 @@ const fmtMoney = (n, c = '') => {
 
 export default function SupplierDetail() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const { can } = useAuth();
-  const { companyParams, notify } = useApp();
+  const { notify } = useApp();
   const [supplier, setSupplier] = useState(null);
   const [tab, setTab] = useState('overview');
   const [loading, setLoading] = useState(true);
@@ -41,45 +52,55 @@ export default function SupplierDetail() {
 
   useEffect(() => { load(); }, [load]);
 
-  if (loading && !supplier) return <div className="app-content"><div className="state-screen">Loading…</div></div>;
-  if (error && !supplier) return (
-    <div className="app-content"><div className="card"><div className="card__body">
-      <p className="field-error" role="alert">{error}</p>
-      <button className="btn mt-2" onClick={load}>Try again</button>
-    </div></div></div>
-  );
+  if (loading && !supplier) {
+    return <div><section className="page-card"><TableSkeleton rows={6} columns={4} /></section></div>;
+  }
+  if (error && !supplier) {
+    return (
+      <div>
+        <div className="alert alert-danger" role="alert">
+          <span style={{ flex: 1 }}>{error}</span>
+          <button type="button" className="btn btn-sm btn-outline-danger" onClick={load}>Try again</button>
+        </div>
+      </div>
+    );
+  }
   if (!supplier) return null;
-
   const s = supplier;
 
   return (
-    <div className="app-content">
-      <header className="page-header">
-        <div className="page-header__main">
-          <div className="breadcrumb">
-            <button className="breadcrumb__back" onClick={() => navigate(-1)}><i className="bi bi-arrow-left" /></button>
-            <span className="breadcrumb__item"><a href="/procurement/suppliers">Suppliers</a></span>
-            <span className="breadcrumb__item is-current"><span>{s.code}</span></span>
+    <div>
+      <div className="page-header">
+        <div className="page-header__lead">
+          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-building"></i></span>
+          <div className="page-header__text">
+            <h1 className="page-title">
+              {s.name}{' '}
+              <span className={`status-pill ${supplierStatusPill(s.status)}`}>{s.status}</span>
+            </h1>
+            <p className="page-subtitle">
+              {s.code} · {s.country} · {s.payment_terms_days} days · credit limit {fmtMoney(s.credit_limit, s.currency)}
+            </p>
           </div>
-          <h1 className="page-header__title">
-            {s.name}
-            <span className={`status ${s.status === 'ACTIVE' ? 'status-active' : s.status === 'SUSPENDED' ? 'status-pending' : s.status === 'ONBOARDING' ? 'status-draft' : 'status-inactive'}`}>{s.status}</span>
-          </h1>
-          <p className="page-header__subtitle">
-            {s.country} · {s.payment_terms_days} days · credit limit {fmtMoney(s.credit_limit, s.currency)}
-          </p>
         </div>
         <div className="page-header__actions">
+          <Link to="/procurement/suppliers" className="btn btn-secondary">
+            <i className="bi bi-arrow-left"></i>
+            Suppliers
+          </Link>
           {can('suppliers.edit') && (
-            <button className="btn" onClick={() => setEditing(true)}><i className="bi bi-pencil" /> Edit</button>
+            <button className="btn btn-primary" onClick={() => setEditing(true)}>
+              <i className="bi bi-pencil"></i>
+              Edit
+            </button>
           )}
         </div>
-      </header>
+      </div>
 
       <div className="tabs">
-        {['overview', 'statement', 'prices', 'performance', 'contacts'].map((t) => (
-          <button key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
-            {t.charAt(0).toUpperCase() + t.slice(1)}
+        {TABS.map((t) => (
+          <button key={t.key} className={`tab ${tab === t.key ? 'active' : ''}`} onClick={() => setTab(t.key)}>
+            <i className={`bi ${t.icon}`} aria-hidden="true"></i> {t.label}
           </button>
         ))}
       </div>
@@ -88,11 +109,14 @@ export default function SupplierDetail() {
       {tab === 'statement' && <StatementTab id={id} />}
       {tab === 'prices' && <PricesTab id={id} />}
       {tab === 'performance' && <PerformanceTab id={id} />}
-      {tab === 'contacts' && <ContactsTab supplier={s} companyParams={companyParams} canEdit={can('suppliers.edit')} />}
+      {tab === 'contacts' && <ContactsTab supplier={s} canEdit={can('suppliers.edit')} />}
 
       {editing && (
-        <SupplierModal row={s} onClose={() => setEditing(false)}
-                       onSaved={() => { setEditing(false); notify('Saved.', 'success'); load(); }} />
+        <SupplierModal
+          row={s}
+          onClose={() => setEditing(false)}
+          onSaved={() => { setEditing(false); notify('Saved.', 'success'); load(); }}
+        />
       )}
     </div>
   );
@@ -100,130 +124,178 @@ export default function SupplierDetail() {
 
 function Overview({ s }) {
   return (
-    <div className="card">
-      <div className="card__body">
-        <div className="kv">
-          <div className="kv__item"><div className="kv__label">Tax PIN</div><div className="kv__value mono">{s.tax_pin || '—'}</div></div>
-          <div className="kv__item"><div className="kv__label">Registration</div><div className="kv__value mono">{s.registration_number || '—'}</div></div>
-          <div className="kv__item"><div className="kv__label">Contact person</div><div className="kv__value">{s.contact_person || '—'}</div></div>
-          <div className="kv__item"><div className="kv__label">Phone</div><div className="kv__value">{s.phone || '—'}</div></div>
-          <div className="kv__item"><div className="kv__label">Email</div><div className="kv__value">{s.email || '—'}</div></div>
-          <div className="kv__item"><div className="kv__label">Bank</div><div className="kv__value">{s.bank_name || '—'}</div></div>
-          <div className="kv__item"><div className="kv__label">Bank account</div><div className="kv__value mono">{s.bank_account || '—'}</div></div>
-          <div className="kv__item"><div className="kv__label">SWIFT</div><div className="kv__value mono">{s.bank_swift || '—'}</div></div>
-        </div>
-        {s.address && <><hr className="divider" /><p className="text-sm text-muted">{s.address}</p></>}
-      </div>
-    </div>
+    <section className="page-card">
+      <SectionHeader first icon="bi-info-circle" title="Supplier Details" />
+      <SectionBody>
+        <KV items={[
+          ['Tax PIN', s.tax_pin || '—'],
+          ['Registration', s.registration_number || '—'],
+          ['Contact person', s.contact_person || '—'],
+          ['Phone', s.phone || '—'],
+          ['Email', s.email || '—'],
+          ['Bank', s.bank_name || '—'],
+          ['Bank account', s.bank_account || '—'],
+          ['SWIFT', s.bank_swift || '—'],
+        ]} />
+        {s.address && (
+          <p className="text-muted-soft" style={{ marginTop: '1rem', marginBottom: 0 }}>
+            <i className="bi bi-geo-alt"></i> {s.address}
+          </p>
+        )}
+      </SectionBody>
+    </section>
   );
 }
 
 function StatementTab({ id }) {
   const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  useEffect(() => { api.suppliers.statement(id).then(setData).catch((e) => setError(errorMessage(e))); }, [id]);
+  useEffect(() => {
+    setLoading(true); setError('');
+    api.suppliers.statement(id).then(setData).catch((e) => setError(errorMessage(e))).finally(() => setLoading(false));
+  }, [id]);
 
-  if (error) return <div className="card"><div className="card__body"><p className="field-error">{error}</p></div></div>;
-  if (!data) return <div className="card"><div className="card__body"><p className="text-muted">Loading…</p></div></div>;
-  const { rows, closing } = data;
+  if (loading) return <section className="page-card"><TableSkeleton rows={6} columns={7} /></section>;
+  if (error) return <div className="alert alert-danger" role="alert">{error}</div>;
+  if (!data) return null;
+
+  const rows = data.rows || [];
+  const closing = Object.entries(data.closing || {});
 
   return (
-    <div className="stack">
-      <div className="card">
-        <div className="card__header"><h2 className="card__title">Closing balances</h2></div>
-        <div className="card__body">
-          {!Object.keys(closing || {}).length ? <p className="text-muted">No movements.</p> : (
-            <div className="kv">
-              {Object.entries(closing).map(([ccy, bal]) => (
-                <div key={ccy} className="kv__item">
-                  <div className="kv__label">{ccy}</div>
-                  <div className={`kv__value ${Number(bal) > 0 ? 'text-danger' : ''}`}>{fmtMoney(bal, ccy)}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-      <div className="card">
-        <div className="card__header"><h2 className="card__title">Statement</h2></div>
-        <div className="card__body card__body--flush">
-          {!rows.length ? <div className="table-empty"><div className="table-empty__title">No transactions</div></div> : (
-            <table className="table table--compact">
-              <thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Ccy</th><th className="num">Debit</th><th className="num">Credit</th><th className="num">Balance</th></tr></thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr key={i}>
-                    <td>{r.date}</td><td>{r.type}</td><td className="mono">{r.reference}</td>
-                    <td>{r.currency}</td>
-                    <td className="num">{fmtMoney(r.debit)}</td>
-                    <td className="num">{fmtMoney(r.credit)}</td>
-                    <td className="num">{fmtMoney(r.balance)}</td>
+    <>
+      <section className="page-card">
+        <SectionHeader first icon="bi-cash-stack" title="Closing Balances" />
+        {!closing.length ? (
+          <EmptyState icon="bi-cash-stack" title="No movements" />
+        ) : (
+          <SectionBody>
+            <KV items={closing.map(([ccy, bal]) => [ccy, fmtMoney(bal, ccy), Number(bal) > 0])} />
+          </SectionBody>
+        )}
+      </section>
+
+      <section className="page-card">
+        <SectionHeader first icon="bi-file-text" title="Statement" subtitle={`${rows.length} transaction${rows.length !== 1 ? 's' : ''}`} />
+        {!rows.length ? (
+          <EmptyState icon="bi-file-text" title="No transactions" />
+        ) : (
+          <div className="table-wrap">
+            <div className="table-responsive">
+              <table className="table table-hover mb-0">
+                <thead>
+                  <tr>
+                    <th>Date</th><th>Type</th><th>Reference</th><th>Ccy</th>
+                    <th className="text-right">Debit</th>
+                    <th className="text-right">Credit</th>
+                    <th className="text-right">Balance</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-    </div>
+                </thead>
+                <tbody>
+                  {rows.map((r, i) => (
+                    <tr key={i}>
+                      <td>{r.date}</td>
+                      <td>{r.type}</td>
+                      <td className="cell-mono">{r.reference}</td>
+                      <td>{r.currency}</td>
+                      <td className="cell-num">{fmtMoney(r.debit)}</td>
+                      <td className="cell-num">{fmtMoney(r.credit)}</td>
+                      <td className="cell-num">{fmtMoney(r.balance)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </section>
+    </>
   );
 }
 
 function PricesTab({ id }) {
   const [rows, setRows] = useState([]);
-  useEffect(() => { api.suppliers.priceHistory(id).then(setRows).catch(() => {}); }, [id]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    setLoading(true);
+    api.suppliers.priceHistory(id).then(setRows).catch(() => {}).finally(() => setLoading(false));
+  }, [id]);
+
   return (
-    <div className="card">
-      <div className="card__header"><h2 className="card__title">Price history</h2></div>
-      <div className="card__body card__body--flush">
-        {!rows.length ? <div className="table-empty"><div className="table-empty__title">No price records</div></div> : (
-          <table className="table table--compact">
-            <thead><tr><th>Date</th><th>Product</th><th className="num">Price</th><th>Ccy</th><th>Source</th></tr></thead>
-            <tbody>
-              {rows.map((p, i) => (
-                <tr key={i}>
-                  <td>{p.date}</td><td>{p.product}</td>
-                  <td className="num">{Number(p.price).toFixed(6)}</td>
-                  <td>{p.currency}</td><td><span className="badge">{p.source}</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
+    <section className="page-card">
+      <SectionHeader first icon="bi-tag" title="Price History" subtitle={`${rows.length} record${rows.length !== 1 ? 's' : ''}`} />
+      {loading ? (
+        <TableSkeleton rows={5} columns={5} />
+      ) : !rows.length ? (
+        <EmptyState icon="bi-tag" title="No price records" />
+      ) : (
+        <div className="table-wrap">
+          <div className="table-responsive">
+            <table className="table table-hover mb-0">
+              <thead>
+                <tr><th>Date</th><th>Product</th><th className="text-right">Price</th><th>Ccy</th><th>Source</th></tr>
+              </thead>
+              <tbody>
+                {rows.map((p, i) => (
+                  <tr key={i}>
+                    <td>{p.date}</td>
+                    <td className="cell-name">{p.product}</td>
+                    <td className="cell-num">{Number(p.price).toFixed(6)}</td>
+                    <td>{p.currency}</td>
+                    <td><span className="badge badge-neutral">{p.source}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
 function PerformanceTab({ id }) {
   const [data, setData] = useState(null);
-  useEffect(() => { api.suppliers.performance(id).then(setData).catch(() => {}); }, [id]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    setLoading(true);
+    api.suppliers.performance(id).then(setData).catch(() => {}).finally(() => setLoading(false));
+  }, [id]);
+
   return (
-    <div className="card">
-      <div className="card__header"><h2 className="card__title">Performance</h2></div>
-      <div className="card__body">
-        {!data ? <p className="text-muted">Loading…</p> : (
-          <div className="kv">
-            <div className="kv__item"><div className="kv__label">Orders</div><div className="kv__value">{data.orders ?? 0}</div></div>
-            <div className="kv__item"><div className="kv__label">Litres ordered</div><div className="kv__value">{Number(data.litres_ordered || 0).toLocaleString()}</div></div>
-            <div className="kv__item"><div className="kv__label">Litres received</div><div className="kv__value">{Number(data.litres_received || 0).toLocaleString()}</div></div>
-            <div className="kv__item"><div className="kv__label">Fill rate %</div><div className="kv__value">{data.fill_rate_pct != null ? Number(data.fill_rate_pct).toFixed(2) : '—'}</div></div>
-            <div className="kv__item"><div className="kv__label">Invoice match exceptions</div><div className="kv__value">{data.invoice_match_exceptions ?? 0}</div></div>
-          </div>
-        )}
-      </div>
-    </div>
+    <section className="page-card">
+      <SectionHeader first icon="bi-speedometer2" title="Performance" />
+      {loading ? (
+        <TableSkeleton rows={3} columns={3} />
+      ) : !data ? (
+        <EmptyState icon="bi-speedometer2" title="Performance data unavailable" />
+      ) : (
+        <SectionBody>
+          <KV items={[
+            ['Orders', data.orders ?? 0],
+            ['Litres ordered', Number(data.litres_ordered || 0).toLocaleString()],
+            ['Litres received', Number(data.litres_received || 0).toLocaleString()],
+            ['Fill rate %', data.fill_rate_pct != null ? Number(data.fill_rate_pct).toFixed(2) : '—'],
+            ['Invoice match exceptions', data.invoice_match_exceptions ?? 0],
+          ]} />
+        </SectionBody>
+      )}
+    </section>
   );
 }
 
-function ContactsTab({ supplier, companyParams, canEdit }) {
+function ContactsTab({ supplier, canEdit }) {
   const { notify } = useApp();
   const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try { setRows(await api.supplierContacts.listAll({ supplier: supplier.id })); }
     catch { /* non-fatal */ }
+    finally { setLoading(false); }
   }, [supplier.id]);
   useEffect(() => { load(); }, [load]);
 
@@ -234,41 +306,67 @@ function ContactsTab({ supplier, companyParams, canEdit }) {
   };
 
   return (
-    <div className="stack">
-      <div className="card">
-        <div className="card__header">
-          <h2 className="card__title">Contacts</h2>
-          {canEdit && <button className="btn btn-sm btn-primary" onClick={() => setEditing({})}>+ Add</button>}
-        </div>
-        <div className="card__body card__body--flush">
-          {!rows.length ? <div className="table-empty"><div className="table-empty__title">No contacts</div></div> : (
-            <table className="table table--compact">
-              <thead><tr><th>Name</th><th>Position</th><th>Phone</th><th>Email</th><th className="col-actions" /></tr></thead>
-              <tbody>
-                {rows.map((c) => (
-                  <tr key={c.id}>
-                    <td>{c.name}</td><td>{c.position || '—'}</td><td>{c.phone || '—'}</td><td>{c.email || '—'}</td>
-                    <td className="col-actions">
-                      {canEdit && (
-                        <div className="row-actions">
-                          <button className="row-action" title="Edit" onClick={() => setEditing(c)}><i className="bi bi-pencil" /></button>
-                          <button className="row-action row-action--danger" title="Delete" onClick={() => remove(c)}><i className="bi bi-trash" /></button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+    <>
+      <section className="page-card">
+        <SectionHeader first icon="bi-person-lines-fill" title="Contacts" subtitle={`${rows.length} contact${rows.length !== 1 ? 's' : ''}`}>
+          {canEdit && (
+            <button className="btn btn-sm btn-primary" onClick={() => setEditing({})}>
+              <i className="bi bi-plus-lg"></i> Add contact
+            </button>
           )}
-        </div>
-      </div>
+        </SectionHeader>
+
+        {loading ? (
+          <TableSkeleton rows={3} columns={5} />
+        ) : !rows.length ? (
+          <EmptyState icon="bi-person-lines-fill" title="No contacts yet" text={canEdit ? "Click 'Add contact' to add the first one" : undefined} />
+        ) : (
+          <div className="table-wrap">
+            <div className="table-responsive">
+              <table className="table table-hover mb-0">
+                <thead>
+                  <tr>
+                    <th>Name</th><th>Position</th><th>Phone</th><th>Email</th>
+                    <th className="text-center" style={{ width: '7rem' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((c) => (
+                    <tr key={c.id}>
+                      <td className="cell-name">{c.name}</td>
+                      <td>{c.position || '—'}</td>
+                      <td>{c.phone || '—'}</td>
+                      <td>{c.email || '—'}</td>
+                      <td>
+                        {canEdit && (
+                          <div className="row-actions">
+                            <button className="btn btn-icon" title="Edit" aria-label="Edit" onClick={() => setEditing(c)}>
+                              <i className="bi bi-pencil"></i>
+                            </button>
+                            <button className="btn btn-icon" title="Delete" aria-label="Delete" onClick={() => remove(c)}>
+                              <i className="bi bi-trash"></i>
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </section>
 
       {editing && (
-        <ContactModal supplier={supplier} row={editing}
-                      onClose={() => setEditing(null)} onSaved={() => { setEditing(null); notify('Saved.', 'success'); load(); }} />
+        <ContactModal
+          supplier={supplier}
+          row={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); notify('Saved.', 'success'); load(); }}
+        />
       )}
-    </div>
+    </>
   );
 }
 
@@ -279,41 +377,50 @@ function ContactModal({ supplier, row, onClose, onSaved }) {
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErr, setFieldErr] = useState({});
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   const submit = async (e) => {
-    e.preventDefault(); setBusy(true); setError('');
+    e.preventDefault(); setBusy(true); setError(''); setFieldErr({});
     try {
       isNew ? await api.supplierContacts.create({ ...form, supplier: supplier.id })
             : await api.supplierContacts.update(row.id, form);
       onSaved();
-    } catch (err) { setError(errorMessage(err)); }
+    } catch (err) { setError(errorMessage(err)); setFieldErr(fieldErrors(err)); }
     finally { setBusy(false); }
   };
 
   return (
-    <div className="modal" role="dialog" aria-modal="true">
-      <div className="modal__dialog">
-        <div className="modal__header">
-          <h2 className="modal__title">{isNew ? 'New contact' : 'Edit contact'}</h2>
-          <button className="modal__close" onClick={onClose} aria-label="Close"><i className="bi bi-x-lg" /></button>
+    <Modal
+      show
+      onClose={onClose}
+      title={isNew ? 'New contact' : 'Edit contact'}
+      subtitle={supplier.name}
+      icon="bi-person-lines-fill"
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" type="submit" form="supplierContactForm" disabled={busy}>
+            <i className="bi bi-save"></i>
+            {busy ? 'Saving...' : 'Save'}
+          </button>
+        </>
+      }
+    >
+      <form id="supplierContactForm" onSubmit={submit}>
+        <h6 className="modal-section-title"><i className="bi bi-card-text" aria-hidden="true"></i>Contact Details</h6>
+        <div className="form-grid">
+          <Field label="Name" required err={fieldErr.name}>
+            <input className="form-control" value={form.name} onChange={set('name')} required />
+          </Field>
+          <Field label="Position"><input className="form-control" value={form.position} onChange={set('position')} /></Field>
+          <Field label="Phone"><input className="form-control" value={form.phone} onChange={set('phone')} /></Field>
+          <Field label="Email" err={fieldErr.email}>
+            <input type="email" className="form-control" value={form.email} onChange={set('email')} />
+          </Field>
         </div>
-        <form onSubmit={submit}>
-          <div className="modal__body">
-            <div className="form">
-              <Field label="Name" required><input className="input" value={form.name} onChange={set('name')} required /></Field>
-              <Field label="Position"><input className="input" value={form.position} onChange={set('position')} /></Field>
-              <Field label="Phone"><input className="input" value={form.phone} onChange={set('phone')} /></Field>
-              <Field label="Email"><input type="email" className="input" value={form.email} onChange={set('email')} /></Field>
-            </div>
-            {error && <p className="field-error mt-3" role="alert">{error}</p>}
-          </div>
-          <div className="modal__footer">
-            <button type="button" className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
-          </div>
-        </form>
-      </div>
-    </div>
+        {error && <div className="alert alert-danger mt-3" role="alert">{error}</div>}
+      </form>
+    </Modal>
   );
 }
