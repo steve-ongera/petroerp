@@ -1,0 +1,38 @@
+export const ROLES = {
+  GROUP_ADMIN: 'GROUP_ADMIN',
+  MD: 'MD',
+  KE_FINANCE_MANAGER: 'KE_FINANCE_MANAGER',
+  DRC_FINANCE_MANAGER: 'DRC_FINANCE_MANAGER',
+  ACCOUNTANT: 'ACCOUNTANT',
+  PROCUREMENT_MANAGER: 'PROCUREMENT_MANAGER',
+  PROCUREMENT_OFFICER: 'PROCUREMENT_OFFICER',
+  SALES_MANAGER: 'SALES_MANAGER',
+  SALES_OFFICER: 'SALES_OFFICER',
+  FLEET_MANAGER: 'FLEET_MANAGER',
+  LOGISTICS_MANAGER: 'LOGISTICS_MANAGER',
+  STORE_MANAGER: 'STORE_MANAGER',
+  CASHIER: 'CASHIER',
+  INTERNAL_AUDITOR: 'INTERNAL_AUDITOR',
+  READONLY_MANAGER: 'READONLY_MANAGER',
+};
+
+// Backend role codes that differ from the frontend names above.
+// Add any code your database actually uses.
+export const ROLE_ALIASES = {
+  OWNER: ROLES.MD,
+  FINANCE_MANAGER: ROLES.KE_FINANCE_MANAGER,
+  FINANCE: ROLES.KE_FINANCE_MANAGER,
+  KE_FINANCE: ROLES.KE_FINANCE_MANAGER,
+  DRC_FINANCE: ROLES.DRC_FINANCE_MANAGER,
+  AUDITOR: ROLES.INTERNAL_AUDITOR,
+  ADMIN: ROLES.GROUP_ADMIN,
+  SUPERUSER: ROLES.GROUP_ADMIN,
+};
+
+export const normalizeRole = (code) => {
+  if (!code) return null;
+  const c = String(code).trim().toUpperCase().replace(/[\s-]+/g, '_');
+  return ROLE_ALIASES[c] || c;
+};
+
+export const isKnownRole = (code) => Object.values(ROLES).includes(code);

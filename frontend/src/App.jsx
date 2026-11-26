@@ -4,9 +4,10 @@
  *  - Routes are generated from src/navigation.js (menu + detail routes) so the sidebar and the router never drift apart.
  *  - Pages live in src/pages/<group>/<Name>.jsx and are code-split automatically (import.meta.glob). A page that has
  *    not been written yet shows a "not built" placeholder instead of breaking the build - add pages one group at a time.
- *  - <RequireAuth> sends anonymous users to /login; <Guard perm="..."> shows "no access" for pages the role cannot use.
- *    The Group Administrator / super user (is_superuser or role GROUP_ADMIN) passes every guard, exactly like the API.
- *    These guards are UX only: the API enforces permissions and legal-entity access on every request.
+ *  - <RequireAuth> sends anonymous users to /login; <Guard roles={...}> shows "no access" for pages the role cannot use.
+ *    Access is ROLE based: each nav entry lists the roles allowed (see navigation.js). The Group Administrator /
+ *    super user passes every guard. Role enforcement lives ONLY in the frontend; the API just requires a signed-in
+ *    user and still applies legal-entity (company) scoping and workflow rules.
  *  - <AppLayout> (components/AppLayout.jsx) renders Sidebar + Navbar + <Outlet/> + toasts.
  */
 import { Component, Suspense, lazy, useEffect, useState } from 'react';
@@ -49,12 +50,17 @@ function NotBuilt({ name }) {
   );
 }
 
-function Forbidden({ perm }) {
+/** Shows the role the app saw, which makes role-code mismatches obvious. */
+function Forbidden() {
+  const { role } = useAccess();
   return (
     <div className="state-card" style={center}>
       <div>
         <h2>No access</h2>
-        <p>Your role does not include <code>{perm}</code>. Ask a Group Administrator if you need it.</p>
+        <p>
+          Your role{role ? <> (<code>{role}</code>)</> : ''} does not have access to this page.
+          Ask a Group Administrator if you need it.
+        </p>
         <Link to="/">Back to home</Link>
       </div>
     </div>
@@ -97,10 +103,10 @@ function RequireAuth({ children }) {
   return children;
 }
 
-/** Super user / Group Administrator passes every guard (see utils/access.js). */
-function Guard({ perm, children }) {
+/** roles: undefined/null = any signed-in user; [] = Group Administrator only; [..] = those roles. Admin always passes. */
+function Guard({ roles, children }) {
   const { can } = useAccess();
-  return can(perm) ? children : <Forbidden perm={perm} />;
+  return can(roles) ? children : <Forbidden />;
 }
 
 /** Renders a page inside a boundary + Suspense and keeps the browser tab title in step. */
@@ -119,7 +125,9 @@ function Page({ pageKey }) {
 
 function Home() {
   const { can } = useAccess();
-  return <Navigate to={firstAllowedPath(can)} replace />;
+  const path = firstAllowedPath(can);
+  // Avoid a redirect loop if the only allowed page is "/" itself
+  return path === '/' ? <Forbidden /> : <Navigate to={path} replace />;
 }
 
 // ------------------------------------------------------------------ login
@@ -182,7 +190,7 @@ function AppRoutes() {
       <Route element={<RequireAuth><AppLayout><Outlet /></AppLayout></RequireAuth>}>
         <Route index element={<Home />} />
         {allRoutes().map((r) => (
-          <Route key={r.path} path={r.path} element={<Guard perm={r.perm}><Page pageKey={r.page} /></Guard>} />
+          <Route key={r.path} path={r.path} element={<Guard roles={r.roles}><Page pageKey={r.page} /></Guard>} />
         ))}
         <Route path="*" element={<NotFound />} />
       </Route>

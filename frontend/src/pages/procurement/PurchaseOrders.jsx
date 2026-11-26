@@ -1,12 +1,15 @@
 ﻿/**
  * Purchase orders.
  * - CRUD /purchase-orders/ (withSubmit)
- * - Row: reference, supplier, order_date, expected loading, status, total
- * - New PO → detail → submit → receive → invoice
+ * - Row: reference, requisition, supplier, order_date, expected loading, status, total
+ * - New PO (from an approved requisition) → detail → submit → receive → invoice
+ *
+ * Permissions: procurement.view (page), procurement.create (new / submit).
  */
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useAuth, useApp } from '../../context/AppContext';
+import { useApp } from '../../context/AppContext';
+import { useAccess } from '../../utils/access';
 import api, { errorMessage } from '../../services/api';
 import ServerPagination from '../../components/ServerPagination';
 import TableSkeleton from '../../components/TableSkeleton';
@@ -26,7 +29,7 @@ export const poStatusPill = (s) => {
 };
 
 export default function PurchaseOrders() {
-  const { can } = useAuth();
+  const { can } = useAccess();
   const { companyParams, activeCompanyObj, notify } = useApp();
   const [rows, setRows] = useState([]);
   const [count, setCount] = useState(0);
@@ -35,6 +38,8 @@ export default function PurchaseOrders() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  const canCreate = can('procurement.create');
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -75,7 +80,7 @@ export default function PurchaseOrders() {
           </div>
         </div>
         <div className="page-header__actions">
-          {can('procurement.edit') && (
+          {canCreate && (
             <Link to="/procurement/purchase-orders/new" className="btn btn-primary">
               <i className="bi bi-plus-lg"></i>
               New PO
@@ -148,13 +153,13 @@ export default function PurchaseOrders() {
         </div>
 
         {loading ? (
-          <TableSkeleton rows={8} columns={7} />
+          <TableSkeleton rows={8} columns={8} />
         ) : rows.length === 0 ? (
           <div className="empty-state">
             <i className="bi bi-bag-check"></i>
             <h6>{hasActiveFilters ? 'No purchase orders match your search' : 'No purchase orders yet'}</h6>
             <p className="text-muted-soft">
-              {hasActiveFilters ? 'Try adjusting your search or filters' : "Click 'New PO' to add the first one"}
+              {hasActiveFilters ? 'Try adjusting your search or filters' : 'Open an approved requisition and click Create PO'}
             </p>
           </div>
         ) : (
@@ -164,6 +169,7 @@ export default function PurchaseOrders() {
                 <thead>
                   <tr>
                     <th>Reference</th>
+                    <th>Requisition</th>
                     <th>Supplier</th>
                     <th>Order date</th>
                     <th>Expected loading</th>
@@ -178,6 +184,7 @@ export default function PurchaseOrders() {
                       <td className="cell-mono fw-600">
                         <Link to={`/procurement/purchase-orders/${po.id}`} className="text-brand">{po.reference}</Link>
                       </td>
+                      <td className="cell-mono">{po.requisition_label || '—'}</td>
                       <td className="cell-name">{po.supplier_label || po.supplier}</td>
                       <td>{po.order_date}</td>
                       <td>{po.expected_loading_date || '—'}</td>
@@ -185,7 +192,7 @@ export default function PurchaseOrders() {
                       <td><span className={`status-pill ${poStatusPill(po.status)}`}>{po.status.replace(/_/g, ' ')}</span></td>
                       <td>
                         <div className="row-actions">
-                          {po.status === 'DRAFT' && can('procurement.edit') && (
+                          {po.status === 'DRAFT' && canCreate && (
                             <button className="btn btn-sm btn-primary" onClick={() => submit(po)}>Submit</button>
                           )}
                           <Link to={`/procurement/purchase-orders/${po.id}`} className="btn btn-icon" title="Open" aria-label="Open">

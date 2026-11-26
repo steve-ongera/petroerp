@@ -1,8 +1,10 @@
 """
 PetroERP API views.
 
-Security model (server-side, never in the frontend):
-  * ModulePermission  : every endpoint needs  <module>.view (GET)  or  <module>.edit (writes)  or a named permission
+Security model (server-side):
+  * authentication    : every endpoint needs a signed-in user
+  * roles             : NOT enforced here. Page/menu access by role is handled in the frontend (navigation.js).
+                        `role_ok` / `RolePermission` are kept as no-op shims so existing `roles = ...` attributes are ignored.
   * entity scoping    : querysets are filtered to the user's allowed legal entities; creates are checked too
   * workflow documents: status can only change through action endpoints (services), edits only while DRAFT
   * posted / immutable records (journals, stock movements, audit logs, shipment history) expose no write verbs
@@ -17,7 +19,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
-from rest_framework.permissions import SAFE_METHODS, BasePermission, IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView, exception_handler
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
@@ -30,6 +32,11 @@ from . import services as svc
 ROUTES = []          # (prefix, viewset) pairs consumed by api/urls.py
 D0 = m.D0
 
+# Legacy role codes. Kept only so old `roles = ...` attributes still import; they are no longer enforced.
+ADMIN_ONLY = ()
+AUDIT_ROLES = ('OWNER', 'AUDITOR')
+FINANCE_ROLES = ('OWNER', 'FINANCE_MANAGER', 'ACCOUNTANT', 'AUDITOR')
+
 
 # ====================================================================== plumbing
 def api_exception_handler(exc, context):
@@ -41,32 +48,17 @@ def api_exception_handler(exc, context):
     return exception_handler(exc, context)
 
 
-class ModulePermission(BasePermission):
+def role_ok(user, roles):
+    """Role restrictions are enforced in the frontend only. Always True."""
+    return True
+
+
+class RolePermission(BasePermission):
+    """Kept so existing `permission_classes` keep working; only requires a signed-in user."""
+
     def has_permission(self, request, view):
         u = request.user
-        if not (u and u.is_authenticated):
-            return False
-        if u.is_group_admin:
-            return True
-        code = view.required_perm(request) if hasattr(view, 'required_perm') else None
-        return True if code is None else u.has_perm_code(code)
-
-
-class PermMixin:
-    module = None
-    perm_map = {}
-
-    def required_perm(self, request):
-        act = getattr(self, 'action', None)
-        if act in self.perm_map:
-            return self.perm_map[act]
-        if not self.module:
-            return None
-        return f'{self.module}.{"view" if request.method in SAFE_METHODS else "edit"}'
-
-    def need(self, code):
-        if not self.request.user.has_perm_code(code):
-            raise PermissionDenied(f'Permission required: {code}')
+        return bool(u and u.is_authenticated)
 
 
 def allowed(user):
@@ -94,8 +86,9 @@ def table_response(request, rep):
 
 
 # ====================================================================== generic CRUD base
-class BaseViewSet(PermMixin, viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated, ModulePermission]
+class BaseViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated, RolePermission]
+    roles = None                   # ignored (roles are enforced in the frontend)
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     ordering_fields = '__all__'
     ordering = ['-pk']
@@ -109,6 +102,27 @@ class BaseViewSet(PermMixin, viewsets.ModelViewSet):
 
     def get_serializer_class(self):
         return sz.serializer_for(self.model)
+
+    def _fill_company(self, data):
+        """If the form sent no company, fill it from ?company=, the linked requisition, or the user's only entity."""
+        if not any(f.name == 'company' for f in self.model._meta.get_fields()) or data.get('company'):
+            return data
+        ids = [str(i) for i in allowed(self.request.user)]
+        cid = self.request.query_params.get('company')
+        if not cid and data.get('requisition'):
+            r = m.PurchaseRequisition.objects.filter(pk=data.get('requisition')).first()
+            cid = r.company_id if r else None
+        if not cid and len(ids) == 1:
+            cid = ids[0]
+        if cid and str(cid) in ids:
+            data = data.copy()
+            data['company'] = cid
+        return data
+
+    def get_serializer(self, *args, **kwargs):
+        if kwargs.get('data') is not None and getattr(self, 'action', None) == 'create':
+            kwargs['data'] = self._fill_company(kwargs['data'])
+        return super().get_serializer(*args, **kwargs)
 
     def get_queryset(self):
         fks = [f.name for f in self.model._meta.get_fields() if f.many_to_one and f.concrete and f.name != 'created_by']
@@ -200,13 +214,13 @@ class BaseViewSet(PermMixin, viewsets.ModelViewSet):
         return Response({'status': o.status})
 
 
-def make_viewset(model, module, *, search=(), filters_=(), date_field=None, readonly=False, scope='company', perm_map=None,
-                 simple_status=(), editable='DEFAULT'):
+def make_viewset(model, *, search=(), filters_=(), date_field=None, readonly=False, scope='company',
+                 simple_status=(), editable='DEFAULT', roles=None):
     names = {f.name for f in model._meta.get_fields()}
     sf = [f for f in ('reference', 'name', 'code', 'registration_number', 'full_name', 'description') if f in names] + list(search)
     ff = [f for f in ['company', 'status', *filters_] if f in names]
-    attrs = dict(model=model, module=module, scope=scope, date_field=date_field, search_fields=sf, filterset_fields=ff,
-                 queryset=model.objects.none(), perm_map=perm_map or {}, simple_status=simple_status)
+    attrs = dict(model=model, scope=scope, date_field=date_field, search_fields=sf, filterset_fields=ff,
+                 queryset=model.objects.none(), simple_status=simple_status, roles=roles)
     if readonly:
         attrs['http_method_names'] = ['get', 'head', 'options']
     if editable != 'DEFAULT':
@@ -214,8 +228,8 @@ def make_viewset(model, module, *, search=(), filters_=(), date_field=None, read
     return type(f'{model.__name__}ViewSet', (BaseViewSet,), attrs)
 
 
-def reg(prefix, model, module, **kw):
-    vs = make_viewset(model, module, **kw)
+def reg(prefix, model, **kw):
+    vs = make_viewset(model, **kw)
     ROUTES.append((prefix, vs))
     return vs
 
@@ -232,7 +246,6 @@ def me_payload(u):
     return {'id': u.id, 'username': u.username, 'name': u.get_full_name() or u.username, 'email': u.email,
             'role': u.role.code if u.role_id else ('SUPERUSER' if u.is_superuser else None),
             'role_name': u.role.name if u.role_id else None, 'mfa_enabled': bool(u.mfa_secret),
-            'permissions': sorted(m.Permission.objects.values_list('code', flat=True)) if u.is_group_admin else sorted(u.perm_codes()),
             'companies': [{'id': c.id, 'code': c.code, 'name': c.name, 'country': c.country, 'currency': c.functional_currency_id}
                           for c in m.Company.objects.filter(id__in=u.allowed_company_ids())]}
 
@@ -282,16 +295,15 @@ class MfaView(APIView):
 class MetaView(APIView):
     def get(self, request):
         return Response({'shipment_statuses': m.SHIPMENT_STATUSES.split(), 'shipment_transitions': {k: sorted(v) for k, v in svc.TRANSITIONS.items()},
-                         'cost_components': svc.COMPONENTS, 'reports': [{'name': k, 'permission': v[1]} for k, v in svc.REPORTS.items()
-                                                                          if request.user.has_perm_code(v[1])],
+                         'cost_components': svc.COMPONENTS, 'reports': [{'name': k} for k in svc.REPORTS],
                          'reporting_currency': svc._rep_ccy()})
 
 
 # ====================================================================== administration & company
 @route('users')
-class UserViewSet(PermMixin, viewsets.ModelViewSet):
-    module = 'admin'
-    permission_classes = [IsAuthenticated, ModulePermission]
+class UserViewSet(viewsets.ModelViewSet):
+    roles = ADMIN_ONLY                      # ignored: user management is restricted in the frontend
+    permission_classes = [IsAuthenticated, RolePermission]
     serializer_class = sz.UserSerializer
     queryset = m.User.objects.select_related('role').order_by('username')
 
@@ -305,15 +317,15 @@ class UserViewSet(PermMixin, viewsets.ModelViewSet):
 
 
 @route('roles')
-class RoleViewSet(PermMixin, viewsets.ReadOnlyModelViewSet):
-    module = 'admin'
-    permission_classes = [IsAuthenticated, ModulePermission]
+class RoleViewSet(viewsets.ReadOnlyModelViewSet):
+    roles = ADMIN_ONLY
+    permission_classes = [IsAuthenticated, RolePermission]
     serializer_class = sz.RoleSerializer
     queryset = m.Role.objects.prefetch_related('permissions').order_by('code')
 
 
 @route('companies')
-class CompanyViewSet(make_viewset(m.Company, 'company', scope='id')):
+class CompanyViewSet(make_viewset(m.Company, scope='id')):
     def perform_create(self, s):
         if not self.request.user.is_group_admin:
             raise PermissionDenied('Only the Group Administrator can register companies.')
@@ -321,24 +333,22 @@ class CompanyViewSet(make_viewset(m.Company, 'company', scope='id')):
         svc.audit(self.request.user, 'CREATE', c)
 
 
-reg('branches', m.Branch, 'company')
-reg('departments', m.Department, 'company')
-reg('currencies', m.Currency, 'company', scope=None)
-reg('exchange-rates', m.ExchangeRate, 'company', scope=None, date_field='rate_date', filters_=('from_currency', 'to_currency'))
-reg('tax-configs', m.TaxConfig, 'company', filters_=('tax_type',))
-reg('number-sequences', m.NumberSequence, 'company')
-reg('approval-policies', m.ApprovalPolicy, 'company')
-reg('account-mappings', m.AccountMapping, 'finance')
-reg('border-crossings', m.BorderCrossing, 'customs', scope=None)
-reg('compliance-requirements', m.ComplianceRequirement, 'customs', scope=None)
+reg('branches', m.Branch)
+reg('departments', m.Department)
+reg('currencies', m.Currency, scope=None)
+reg('exchange-rates', m.ExchangeRate, scope=None, date_field='rate_date', filters_=('from_currency', 'to_currency'))
+reg('tax-configs', m.TaxConfig, filters_=('tax_type',))
+reg('number-sequences', m.NumberSequence)
+reg('approval-policies', m.ApprovalPolicy)
+reg('account-mappings', m.AccountMapping)
+reg('border-crossings', m.BorderCrossing, scope=None)
+reg('compliance-requirements', m.ComplianceRequirement, scope=None)
 
 
 class TaxVerify(APIView):
     """Professional verification of a tax/duty configuration (required before it can be used)."""
 
     def post(self, request, pk):
-        if not request.user.has_perm_code('company.edit'):
-            raise PermissionDenied()
         t = m.TaxConfig.objects.get(pk=pk, company_id__in=allowed(request.user))
         if t.created_by_id == request.user.id:
             raise DRFValidationError({'detail': 'Segregation of duties: someone else must verify this configuration.'})
@@ -348,7 +358,7 @@ class TaxVerify(APIView):
         return Response({'verified': True})
 
 
-class FiscalYearViewSet(make_viewset(m.FiscalYear, 'finance', perm_map={'close': 'finance.close_period', 'create': 'finance.close_period'})):
+class FiscalYearViewSet(make_viewset(m.FiscalYear)):
     def create(self, request, *a, **kw):
         d = sz.FiscalYearIn(data=request.data)
         d.is_valid(raise_exception=True)
@@ -365,9 +375,8 @@ class FiscalYearViewSet(make_viewset(m.FiscalYear, 'finance', perm_map={'close':
 ROUTES.append(('fiscal-years', FiscalYearViewSet))
 
 
-class PeriodViewSet(make_viewset(m.AccountingPeriod, 'finance', readonly=True)):
+class PeriodViewSet(make_viewset(m.AccountingPeriod, readonly=True)):
     http_method_names = ['get', 'post', 'head', 'options']
-    perm_map = {'close': 'finance.close_period', 'reopen': 'finance.close_period'}
 
     @action(detail=True, methods=['post'])
     def close(self, request, pk=None):
@@ -392,7 +401,7 @@ def _statement(rows):
 
 
 @route('suppliers')
-class SupplierViewSet(make_viewset(m.Supplier, 'suppliers', search=('tax_pin',), filters_=('country',))):
+class SupplierViewSet(make_viewset(m.Supplier, search=('tax_pin',), filters_=('country',))):
     @action(detail=True, methods=['get'])
     def statement(self, request, pk=None):
         s = self.get_object()
@@ -417,19 +426,30 @@ class SupplierViewSet(make_viewset(m.Supplier, 'suppliers', search=('tax_pin',),
                          'fill_rate_pct': m.q3(recvd / ordered * 100) if ordered else None, 'invoice_match_exceptions': bad})
 
 
-reg('supplier-contacts', m.SupplierContact, 'suppliers', scope='supplier__company')
-reg('supplier-contracts', m.SupplierContract, 'suppliers', simple_status=('ACTIVE', 'EXPIRED', 'CANCELLED'), editable=None)
-reg('supplier-prices', m.SupplierPrice, 'suppliers', date_field='effective_date', filters_=('supplier', 'product'))
-reg('supplier-quotations', m.SupplierQuotation, 'suppliers', simple_status=('RECEIVED', 'ACCEPTED', 'REJECTED', 'EXPIRED'), editable=None)
+reg('supplier-contacts', m.SupplierContact, scope='supplier__company')
+reg('supplier-contracts', m.SupplierContract, simple_status=('ACTIVE', 'EXPIRED', 'CANCELLED'), editable=None)
+reg('supplier-prices', m.SupplierPrice, date_field='effective_date', filters_=('supplier', 'product'))
+reg('supplier-quotations', m.SupplierQuotation, simple_status=('RECEIVED', 'ACCEPTED', 'REJECTED', 'EXPIRED'), editable=None)
 
 
 # ====================================================================== procurement
-reg('purchase-requisitions', m.PurchaseRequisition, 'procurement', simple_status=('CONVERTED',), editable=('DRAFT',))
+reg('purchase-requisitions', m.PurchaseRequisition, simple_status=('CONVERTED',), editable=('DRAFT',))
 
 
 @route('purchase-orders')
-class PurchaseOrderViewSet(make_viewset(m.PurchaseOrder, 'procurement', filters_=('supplier',), date_field='order_date',
-                                        perm_map={'receive': 'inventory.edit'})):
+class PurchaseOrderViewSet(make_viewset(m.PurchaseOrder, filters_=('supplier', 'requisition'), date_field='order_date')):
+    def perform_create(self, serializer):
+        r = serializer.validated_data.get('requisition')
+        if r and r.status != 'APPROVED':
+            raise DRFValidationError({'requisition': 'Only an approved requisition can be turned into a purchase order.'})
+        super().perform_create(serializer)
+
+    def after_save(self, obj):
+        r = obj.requisition
+        if r and r.status == 'APPROVED':
+            r.status = 'CONVERTED'
+            r.save(update_fields=['status'])
+
     @action(detail=True, methods=['post'])
     def receive(self, request, pk=None):
         po = self.get_object()
@@ -450,11 +470,11 @@ class PurchaseOrderViewSet(make_viewset(m.PurchaseOrder, 'procurement', filters_
         return Response({'status': po.status})
 
 
-reg('goods-receipts', m.GoodsReceipt, 'inventory', readonly=True, date_field='receipt_date')
+reg('goods-receipts', m.GoodsReceipt, readonly=True, date_field='receipt_date')
 
 
 @route('purchase-returns')
-class PurchaseReturnViewSet(make_viewset(m.PurchaseReturn, 'inventory')):
+class PurchaseReturnViewSet(make_viewset(m.PurchaseReturn)):
     def create(self, request, *a, **kw):
         d = sz.PurchaseReturnIn(data=request.data)
         d.is_valid(raise_exception=True)
@@ -465,7 +485,7 @@ class PurchaseReturnViewSet(make_viewset(m.PurchaseReturn, 'inventory')):
 
 
 @route('purchase-invoices')
-class PurchaseInvoiceViewSet(make_viewset(m.PurchaseInvoice, 'procurement', filters_=('supplier', 'match_status'), date_field='invoice_date')):
+class PurchaseInvoiceViewSet(make_viewset(m.PurchaseInvoice, filters_=('supplier', 'match_status'), date_field='invoice_date')):
     @action(detail=True, methods=['post'])
     def match(self, request, pk=None):
         inv = self.get_object()
@@ -475,33 +495,31 @@ class PurchaseInvoiceViewSet(make_viewset(m.PurchaseInvoice, 'procurement', filt
     def post(self, request, pk=None):
         d = sz.PostInvoiceIn(data=request.data)
         d.is_valid(raise_exception=True)
-        if d.validated_data['override']:
-            self.need('procurement.override_match')
         inv = svc.post_purchase_invoice(self.get_object(), request.user, d.validated_data['override'])
         return Response(sz.serializer_for(m.PurchaseInvoice)(inv).data)
 
 
 @route('supplier-credit-notes')
-class SupplierCreditNoteViewSet(make_viewset(m.SupplierCreditNote, 'procurement')):
+class SupplierCreditNoteViewSet(make_viewset(m.SupplierCreditNote)):
     @action(detail=True, methods=['post'])
     def post(self, request, pk=None):
         return Response(sz.serializer_for(m.SupplierCreditNote)(svc.post_supplier_credit_note(self.get_object(), request.user)).data)
 
 
 # ====================================================================== products, depots, tanks, stock
-reg('products', m.Product, 'inventory', scope=None, filters_=('category',))
-reg('depots', m.Depot, 'inventory')
-reg('tank-calibrations', m.TankCalibration, 'inventory', scope='tank__company')
-reg('stock-movements', m.StockMovement, 'inventory', readonly=True, date_field='movement_date', filters_=('tank', 'product', 'movement_type', 'shipment'))
-reg('stock-balances', m.StockBalance, 'inventory', readonly=True, filters_=('tank', 'product'))
-reg('stock-reservations', m.StockReservation, 'inventory', readonly=True)
-reg('tank-readings', m.TankReading, 'inventory', date_field='reading_date', filters_=('tank',))
-reg('stock-adjustments', m.StockAdjustment, 'inventory', readonly=True)
-reg('stock-transfers', m.StockTransfer, 'inventory', readonly=True)
+reg('products', m.Product, scope=None, filters_=('category',))
+reg('depots', m.Depot)
+reg('tank-calibrations', m.TankCalibration, scope='tank__company')
+reg('stock-movements', m.StockMovement, readonly=True, date_field='movement_date', filters_=('tank', 'product', 'movement_type', 'shipment'))
+reg('stock-balances', m.StockBalance, readonly=True, filters_=('tank', 'product'))
+reg('stock-reservations', m.StockReservation, readonly=True)
+reg('tank-readings', m.TankReading, date_field='reading_date', filters_=('tank',))
+reg('stock-adjustments', m.StockAdjustment, readonly=True)
+reg('stock-transfers', m.StockTransfer, readonly=True)
 
 
 @route('storage-tanks')
-class TankViewSet(make_viewset(m.StorageTank, 'inventory', filters_=('depot', 'product'))):
+class TankViewSet(make_viewset(m.StorageTank, filters_=('depot', 'product'))):
     @action(detail=True, methods=['get'])
     def position(self, request, pk=None):
         t = self.get_object()
@@ -512,7 +530,7 @@ class TankViewSet(make_viewset(m.StorageTank, 'inventory', filters_=('depot', 'p
 
 
 @route('tank-reconciliations')
-class TankReconViewSet(make_viewset(m.TankReconciliation, 'inventory', readonly=True, date_field='recon_date', filters_=('tank',))):
+class TankReconViewSet(make_viewset(m.TankReconciliation, readonly=True, date_field='recon_date', filters_=('tank',))):
     http_method_names = ['get', 'post', 'head', 'options']
 
     def create(self, request, *a, **kw):
@@ -525,7 +543,6 @@ class TankReconViewSet(make_viewset(m.TankReconciliation, 'inventory', readonly=
 
     @action(detail=True, methods=['post'], url_path='raise-adjustment')
     def raise_adjustment(self, request, pk=None):
-        self.need('inventory.adjust')
         adj = svc.raise_adjustment(self.get_object(), request.user, request.data.get('reason', ''))
         return Response(sz.serializer_for(m.StockAdjustment)(adj).data, status=201)
 
@@ -534,8 +551,6 @@ class StockOps(APIView):
     """POST /stock/transfer/   POST /stock/opening/"""
 
     def post(self, request, op):
-        if not request.user.has_perm_code('inventory.edit'):
-            raise PermissionDenied()
         if op == 'transfer':
             d = sz.TransferIn(data=request.data)
             d.is_valid(raise_exception=True)
@@ -553,7 +568,7 @@ class StockOps(APIView):
 
 # ====================================================================== customers & sales
 @route('customers')
-class CustomerViewSet(make_viewset(m.Customer, 'customers', search=('tax_registration',), filters_=('country',))):
+class CustomerViewSet(make_viewset(m.Customer, search=('tax_registration',), filters_=('country',))):
     @action(detail=True, methods=['get'])
     def statement(self, request, pk=None):
         c = self.get_object()
@@ -572,7 +587,6 @@ class CustomerViewSet(make_viewset(m.Customer, 'customers', search=('tax_registr
 
     @action(detail=True, methods=['post'], url_path='set-credit-limit')
     def set_credit_limit(self, request, pk=None):
-        self.need('credit.override')
         c = self.get_object()
         new = m.dec(request.data.get('limit'))
         m.CustomerCreditLimit.objects.create(customer=c, limit=new, effective_date=svc.today(), approved_by=request.user,
@@ -583,15 +597,15 @@ class CustomerViewSet(make_viewset(m.Customer, 'customers', search=('tax_registr
         return Response({'credit_limit': new})
 
 
-reg('customer-contacts', m.CustomerContact, 'customers', scope='customer__company')
-reg('customer-credit-limits', m.CustomerCreditLimit, 'customers', scope='customer__company', readonly=True)
-reg('customer-contracts', m.CustomerContract, 'customers', simple_status=('ACTIVE', 'EXPIRED', 'CANCELLED'), editable=None)
-reg('market-prices', m.MarketPrice, 'sales', date_field='reference_date', filters_=('product',))
-reg('sales-quotations', m.SalesQuotation, 'sales', simple_status=('SENT', 'ACCEPTED', 'REJECTED', 'EXPIRED', 'CONVERTED'), editable=('DRAFT', 'SENT'))
+reg('customer-contacts', m.CustomerContact, scope='customer__company')
+reg('customer-credit-limits', m.CustomerCreditLimit, scope='customer__company', readonly=True)
+reg('customer-contracts', m.CustomerContract, simple_status=('ACTIVE', 'EXPIRED', 'CANCELLED'), editable=None)
+reg('market-prices', m.MarketPrice, date_field='reference_date', filters_=('product',))
+reg('sales-quotations', m.SalesQuotation, simple_status=('SENT', 'ACCEPTED', 'REJECTED', 'EXPIRED', 'CONVERTED'), editable=('DRAFT', 'SENT'))
 
 
 @route('sales-orders')
-class SalesOrderViewSet(make_viewset(m.SalesOrder, 'sales', filters_=('customer',), date_field='order_date')):
+class SalesOrderViewSet(make_viewset(m.SalesOrder, filters_=('customer',), date_field='order_date')):
     @action(detail=True, methods=['post'])
     def reserve(self, request, pk=None):
         d = sz.ReserveIn(data=request.data)
@@ -611,19 +625,17 @@ class SalesOrderViewSet(make_viewset(m.SalesOrder, 'sales', filters_=('customer'
 
 
 @route('sales-invoices')
-class SalesInvoiceViewSet(make_viewset(m.SalesInvoice, 'sales', filters_=('customer',), date_field='invoice_date')):
+class SalesInvoiceViewSet(make_viewset(m.SalesInvoice, filters_=('customer',), date_field='invoice_date')):
     @action(detail=True, methods=['post'])
     def post(self, request, pk=None):
         d = sz.PostInvoiceIn(data=request.data)
         d.is_valid(raise_exception=True)
-        if d.validated_data['override']:
-            self.need('credit.override')
         inv = svc.post_sales_invoice(self.get_object(), request.user, d.validated_data['override'])
         return Response(sz.serializer_for(m.SalesInvoice)(inv).data)
 
 
 @route('sales-credit-notes')
-class SalesCreditNoteViewSet(make_viewset(m.SalesCreditNote, 'sales', date_field='note_date')):
+class SalesCreditNoteViewSet(make_viewset(m.SalesCreditNote, date_field='note_date')):
     @action(detail=True, methods=['post'])
     def post(self, request, pk=None):
         return Response(sz.serializer_for(m.SalesCreditNote)(svc.post_sales_credit_note(self.get_object(), request.user)).data)
@@ -633,8 +645,6 @@ class PricingView(APIView):
     """Preview selling price / margin / markup for any of the three pricing methods."""
 
     def post(self, request):
-        if not request.user.has_perm_code('sales.view'):
-            raise PermissionDenied()
         d = sz.PricingIn(data=request.data)
         d.is_valid(raise_exception=True)
         v = d.validated_data
@@ -645,7 +655,7 @@ class PricingView(APIView):
 
 # ====================================================================== fleet & transport
 @route('vehicles')
-class VehicleViewSet(make_viewset(m.Vehicle, 'fleet', search=('make', 'model'), filters_=('ownership',))):
+class VehicleViewSet(make_viewset(m.Vehicle, search=('make', 'model'), filters_=('ownership',))):
     @action(detail=True, methods=['post'], url_path='log-expense')
     def log_expense(self, request, pk=None):
         v = self.get_object()
@@ -668,16 +678,16 @@ class VehicleViewSet(make_viewset(m.Vehicle, 'fleet', search=('make', 'model'), 
         return Response(dict(zip(keys, row)) if row else {})
 
 
-reg('trailers', m.Trailer, 'fleet')
-reg('drivers', m.Driver, 'fleet', search=('licence_number', 'id_number'))
-reg('vehicle-assignments', m.VehicleAssignment, 'fleet', readonly=True)
-reg('vehicle-maintenance', m.VehicleMaintenance, 'fleet', date_field='maintenance_date', filters_=('vehicle',))
-reg('vehicle-expenses', m.VehicleExpense, 'fleet', date_field='expense_date', filters_=('vehicle', 'shipment'), readonly=True)
-reg('vehicle-documents', m.VehicleDocument, 'fleet', filters_=('vehicle',))
+reg('trailers', m.Trailer)
+reg('drivers', m.Driver, search=('licence_number', 'id_number'))
+reg('vehicle-assignments', m.VehicleAssignment, readonly=True)
+reg('vehicle-maintenance', m.VehicleMaintenance, date_field='maintenance_date', filters_=('vehicle',))
+reg('vehicle-expenses', m.VehicleExpense, date_field='expense_date', filters_=('vehicle', 'shipment'), readonly=True)
+reg('vehicle-documents', m.VehicleDocument, filters_=('vehicle',))
 
 
 @route('transporters')
-class TransporterViewSet(make_viewset(m.Transporter, 'transport', search=('tax_pin',))):
+class TransporterViewSet(make_viewset(m.Transporter, search=('tax_pin',))):
     @action(detail=True, methods=['get'])
     def performance(self, request, pk=None):
         t = self.get_object()
@@ -698,13 +708,13 @@ class TransporterViewSet(make_viewset(m.Transporter, 'transport', search=('tax_p
         return Response(_statement(rows))
 
 
-reg('transporter-contracts', m.TransporterContract, 'transport', simple_status=('ACTIVE', 'EXPIRED', 'CANCELLED'), editable=None)
-reg('transporter-rates', m.TransporterRate, 'transport', filters_=('transporter',))
-reg('transporter-vehicles', m.TransporterVehicle, 'transport', filters_=('transporter', 'kind'))
+reg('transporter-contracts', m.TransporterContract, simple_status=('ACTIVE', 'EXPIRED', 'CANCELLED'), editable=None)
+reg('transporter-rates', m.TransporterRate, filters_=('transporter',))
+reg('transporter-vehicles', m.TransporterVehicle, filters_=('transporter', 'kind'))
 
 
 @route('transport-bookings')
-class TransportBookingViewSet(make_viewset(m.TransportBooking, 'transport', filters_=('transporter', 'shipment'), date_field='booking_date')):
+class TransportBookingViewSet(make_viewset(m.TransportBooking, filters_=('transporter', 'shipment'), date_field='booking_date')):
     def after_save(self, obj):
         svc.prepare_booking(obj)
         m.TransportBooking.objects.filter(pk=obj.pk).update(total_charge=obj.total_charge)
@@ -717,7 +727,7 @@ class TransportBookingViewSet(make_viewset(m.TransportBooking, 'transport', filt
 
 
 @route('transporter-invoices')
-class TransporterInvoiceViewSet(make_viewset(m.TransporterInvoice, 'transport', filters_=('transporter', 'booking'), date_field='invoice_date')):
+class TransporterInvoiceViewSet(make_viewset(m.TransporterInvoice, filters_=('transporter', 'booking'), date_field='invoice_date')):
     def after_save(self, obj):
         obj.recalc()
 
@@ -728,9 +738,8 @@ class TransporterInvoiceViewSet(make_viewset(m.TransporterInvoice, 'transport', 
 
 # ====================================================================== shipments, customs
 @route('shipments')
-class ShipmentViewSet(make_viewset(m.Shipment, 'shipments', filters_=('customer', 'supplier', 'product', 'truck_ownership', 'transporter', 'vehicle'),
-                                   date_field='loading_date', perm_map={'cost': 'costing.edit', 'cost_sheets': 'costing.view',
-                                                                         'export_cost_sheet': 'costing.view', 'fuel': 'shipments.view'})):
+class ShipmentViewSet(make_viewset(m.Shipment, filters_=('customer', 'supplier', 'product', 'truck_ownership', 'transporter', 'vehicle'),
+                                   date_field='loading_date')):
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     @action(detail=True, methods=['post'], url_path='update-status')
@@ -771,8 +780,6 @@ class ShipmentViewSet(make_viewset(m.Shipment, 'shipments', filters_=('customer'
         d = sz.CostIn(data=request.data)
         d.is_valid(raise_exception=True)
         v = d.validated_data
-        if v['finalize'] or v['reopen']:
-            self.need('costing.finalize')
         sheet = svc.compute_cost_sheet(self.get_object(), request.user, finalize=v['finalize'], reopen=v['reopen'], notes=v.get('notes', ''))
         return Response(sz.ShipmentCostSheetSerializer(sheet).data, status=201)
 
@@ -801,26 +808,26 @@ class ShipmentViewSet(make_viewset(m.Shipment, 'shipments', filters_=('customer'
                           'confirmed_by': h.confirmed_by, 'attachment': request.build_absolute_uri(h.attachment.url) if h.attachment else None} for h in qs])
 
 
-reg('shipment-status-history', m.ShipmentStatusHistory, 'shipments', readonly=True, filters_=('shipment',))
-reg('shipment-stages', m.ShipmentStage, 'shipments', filters_=('shipment',))
-reg('shipment-documents', m.ShipmentDocument, 'shipments', filters_=('shipment',))
-reg('shipment-deliveries', m.ShipmentDelivery, 'shipments', readonly=True, filters_=('shipment',), date_field='delivery_date')
-reg('shipment-allocations', m.ShipmentCostAllocation, 'costing', readonly=True, filters_=('shipment', 'expense'))
-reg('export-declarations', m.ExportDeclaration, 'customs', filters_=('shipment',), simple_status=('SUBMITTED', 'QUERIED', 'CLEARED', 'REJECTED'), editable=None)
-reg('compliance-checks', m.ShipmentComplianceCheck, 'customs', filters_=('shipment',))
+reg('shipment-status-history', m.ShipmentStatusHistory, readonly=True, filters_=('shipment',))
+reg('shipment-stages', m.ShipmentStage, filters_=('shipment',))
+reg('shipment-documents', m.ShipmentDocument, filters_=('shipment',))
+reg('shipment-deliveries', m.ShipmentDelivery, readonly=True, filters_=('shipment',), date_field='delivery_date')
+reg('shipment-allocations', m.ShipmentCostAllocation, readonly=True, filters_=('shipment', 'expense'))
+reg('export-declarations', m.ExportDeclaration, filters_=('shipment',), simple_status=('SUBMITTED', 'QUERIED', 'CLEARED', 'REJECTED'), editable=None)
+reg('compliance-checks', m.ShipmentComplianceCheck, filters_=('shipment',))
 
 
 @route('cost-sheets')
-class CostSheetViewSet(make_viewset(m.ShipmentCostSheet, 'costing', readonly=True, filters_=('shipment', 'is_final'))):
+class CostSheetViewSet(make_viewset(m.ShipmentCostSheet, readonly=True, filters_=('shipment', 'is_final'))):
     pass
 
 
 # ====================================================================== expenses & payments
-reg('expense-categories', m.ExpenseCategory, 'expenses', scope=None)
+reg('expense-categories', m.ExpenseCategory, scope=None)
 
 
 @route('expenses')
-class ExpenseViewSet(make_viewset(m.Expense, 'expenses', filters_=('category', 'shipment', 'vehicle', 'supplier', 'transporter'), date_field='expense_date')):
+class ExpenseViewSet(make_viewset(m.Expense, filters_=('category', 'shipment', 'vehicle', 'supplier', 'transporter'), date_field='expense_date')):
     @action(detail=True, methods=['post'])
     def post(self, request, pk=None):
         return Response(sz.ExpenseSerializer(svc.post_expense(self.get_object(), request.user), context={'request': request}).data)
@@ -835,9 +842,8 @@ class ExpenseViewSet(make_viewset(m.Expense, 'expenses', filters_=('category', '
 
 
 @route('payments')
-class PaymentViewSet(make_viewset(m.Payment, 'payments', filters_=('direction', 'party_type', 'method', 'bank_account', 'customer', 'supplier', 'transporter'),
-                                  search=('mpesa_reference', 'bank_reference', 'payer_phone'), date_field='payment_date',
-                                  perm_map={'post': 'payments.edit', 'approve': 'approvals.decide', 'reverse': 'finance.post'})):
+class PaymentViewSet(make_viewset(m.Payment, filters_=('direction', 'party_type', 'method', 'bank_account', 'customer', 'supplier', 'transporter'),
+                                  search=('mpesa_reference', 'bank_reference', 'payer_phone'), date_field='payment_date')):
     @action(detail=True, methods=['post'])
     def submit(self, request, pk=None):
         req = svc.request_payment_approval(self.get_object(), request.user)
@@ -855,8 +861,6 @@ class PaymentViewSet(make_viewset(m.Payment, 'payments', filters_=('direction', 
     @action(detail=True, methods=['post'])
     def post(self, request, pk=None):
         p = self.get_object()
-        if p.direction == 'PAYMENT':
-            self.need('payments.execute')          # approval and execution are separate permissions
         d = sz.PaymentPostIn(data=request.data)
         d.is_valid(raise_exception=True)
         allocs = [{k: (v.pk if hasattr(v, 'pk') else v) for k, v in a.items()} for a in d.validated_data.get('allocations', [])]
@@ -879,7 +883,7 @@ class PaymentViewSet(make_viewset(m.Payment, 'payments', filters_=('direction', 
 
 
 @route('bank-accounts')
-class BankAccountViewSet(make_viewset(m.BankAccount, 'payments', filters_=('account_type', 'currency'))):
+class BankAccountViewSet(make_viewset(m.BankAccount, filters_=('account_type', 'currency'))):
     @action(detail=True, methods=['post'], url_path='import-statement', parser_classes=[MultiPartParser, FormParser, JSONParser])
     def import_statement(self, request, pk=None):
         ba = self.get_object()
@@ -909,7 +913,7 @@ class BankAccountViewSet(make_viewset(m.BankAccount, 'payments', filters_=('acco
 
 
 @route('bank-transactions')
-class BankTransactionViewSet(make_viewset(m.BankTransaction, 'payments', readonly=True, filters_=('bank_account',), date_field='txn_date')):
+class BankTransactionViewSet(make_viewset(m.BankTransaction, readonly=True, filters_=('bank_account',), date_field='txn_date')):
     http_method_names = ['get', 'post', 'head', 'options']
 
     @action(detail=True, methods=['post'])
@@ -926,19 +930,17 @@ class BankTransactionViewSet(make_viewset(m.BankTransaction, 'payments', readonl
         return Response({'status': t.status})
 
 
-reg('bank-reconciliations', m.BankReconciliation, 'payments', readonly=True)
+reg('bank-reconciliations', m.BankReconciliation, readonly=True)
 
 
 # ====================================================================== general ledger & finance
-reg('accounts', m.Account, 'finance', filters_=('account_type', 'subtype'), search=('group_code',))
+reg('accounts', m.Account, filters_=('account_type', 'subtype'), search=('group_code',))
 
 
 @route('journals')
-class JournalViewSet(PermMixin, viewsets.ReadOnlyModelViewSet):
+class JournalViewSet(viewsets.ReadOnlyModelViewSet):
     """Posted journals are read-only; manual journals via /manual/, corrections via /reverse/."""
-    module = 'finance'
-    perm_map = {'manual': 'finance.post', 'reverse': 'finance.post'}
-    permission_classes = [IsAuthenticated, ModulePermission]
+    permission_classes = [IsAuthenticated, RolePermission]
     serializer_class = sz.JournalSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['company', 'status', 'source_type', 'is_closing']
@@ -970,10 +972,9 @@ class JournalViewSet(PermMixin, viewsets.ReadOnlyModelViewSet):
 
 
 @route('fixed-assets')
-class FixedAssetViewSet(make_viewset(m.FixedAsset, 'assets', filters_=('category',), date_field='acquisition_date')):
+class FixedAssetViewSet(make_viewset(m.FixedAsset, filters_=('category',), date_field='acquisition_date')):
     @action(detail=False, methods=['post'], url_path='run-depreciation')
     def run_depreciation(self, request):
-        self.need('finance.post')
         d = sz.DepreciationIn(data=request.data)
         d.is_valid(raise_exception=True)
         check_company(request.user, d.validated_data['company'])
@@ -982,7 +983,6 @@ class FixedAssetViewSet(make_viewset(m.FixedAsset, 'assets', filters_=('category
 
     @action(detail=True, methods=['post'])
     def dispose(self, request, pk=None):
-        self.need('finance.post')
         d = sz.DisposeIn(data=request.data)
         d.is_valid(raise_exception=True)
         v = d.validated_data
@@ -998,16 +998,15 @@ class FixedAssetViewSet(make_viewset(m.FixedAsset, 'assets', filters_=('category
 
 
 # ====================================================================== payroll / HR
-reg('employees', m.Employee, 'hr', search=('national_id',))
-reg('leave-requests', m.LeaveRequest, 'hr', simple_status=('APPROVED', 'REJECTED'), editable=('DRAFT',), filters_=('employee',))
-reg('payroll-configs', m.PayrollConfig, 'hr')
+reg('employees', m.Employee, search=('national_id',))
+reg('leave-requests', m.LeaveRequest, simple_status=('APPROVED', 'REJECTED'), editable=('DRAFT',), filters_=('employee',))
+reg('payroll-configs', m.PayrollConfig)
 
 
 @route('payroll-runs')
-class PayrollRunViewSet(make_viewset(m.PayrollRun, 'hr', date_field='period_end')):
+class PayrollRunViewSet(make_viewset(m.PayrollRun, date_field='period_end')):
     @action(detail=True, methods=['post'])
     def process(self, request, pk=None):
-        self.need('finance.post')
         d = sz.PayrollIn(data=request.data)
         d.is_valid(raise_exception=True)
         run = svc.run_payroll(self.get_object(), request.user, {str(k): v for k, v in d.validated_data.get('overtime', {}).items()})
@@ -1022,10 +1021,8 @@ class PayrollRunViewSet(make_viewset(m.PayrollRun, 'hr', date_field='period_end'
 
 # ====================================================================== group accounting
 @route('intercompany')
-class IntercompanyViewSet(PermMixin, viewsets.ReadOnlyModelViewSet):
-    module = 'group'
-    perm_map = {'sale': 'group.edit', 'settle': 'group.edit', 'reconcile': 'group.edit'}
-    permission_classes = [IsAuthenticated, ModulePermission]
+class IntercompanyViewSet(viewsets.ReadOnlyModelViewSet):
+    permission_classes = [IsAuthenticated, RolePermission]
     serializer_class = sz.IntercompanySerializer
 
     def get_queryset(self):
@@ -1055,10 +1052,8 @@ class IntercompanyViewSet(PermMixin, viewsets.ReadOnlyModelViewSet):
 
 
 @route('consolidation-runs')
-class ConsolidationViewSet(PermMixin, viewsets.ReadOnlyModelViewSet):
-    module = 'group'
-    perm_map = {'run': 'group.edit'}
-    permission_classes = [IsAuthenticated, ModulePermission]
+class ConsolidationViewSet(viewsets.ReadOnlyModelViewSet):
+    permission_classes = [IsAuthenticated, RolePermission]
     queryset = m.ConsolidationRun.objects.order_by('-id')
     serializer_class = sz.make_serializer(m.ConsolidationRun)
 
@@ -1080,8 +1075,6 @@ class ConsolidationViewSet(PermMixin, viewsets.ReadOnlyModelViewSet):
 
 class RevalueView(APIView):
     def post(self, request):
-        if not request.user.has_perm_code('finance.close_period'):
-            raise PermissionDenied()
         d = sz.RevalueIn(data=request.data)
         d.is_valid(raise_exception=True)
         v = d.validated_data
@@ -1092,7 +1085,7 @@ class RevalueView(APIView):
 
 # ====================================================================== approvals, notifications, audit
 @route('approvals')
-class ApprovalViewSet(make_viewset(m.ApprovalRequest, 'approvals', readonly=True, filters_=('doc_type',), perm_map={'approve': 'approvals.decide', 'reject': 'approvals.decide'})):
+class ApprovalViewSet(make_viewset(m.ApprovalRequest, readonly=True, filters_=('doc_type',))):
     http_method_names = ['get', 'post', 'head', 'options']
 
     def _decide(self, request, ok):
@@ -1111,7 +1104,7 @@ class ApprovalViewSet(make_viewset(m.ApprovalRequest, 'approvals', readonly=True
 
 
 @route('notifications')
-class NotificationViewSet(PermMixin, viewsets.ReadOnlyModelViewSet):
+class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = sz.NotificationSerializer
 
@@ -1134,10 +1127,9 @@ class NotificationViewSet(PermMixin, viewsets.ReadOnlyModelViewSet):
 
 
 @route('audit-logs')
-class AuditViewSet(PermMixin, viewsets.ReadOnlyModelViewSet):
-    module = 'audit'
-    perm_map = {'verify': 'audit.view'}
-    permission_classes = [IsAuthenticated, ModulePermission]
+class AuditViewSet(viewsets.ReadOnlyModelViewSet):
+    roles = AUDIT_ROLES                      # ignored: restricted in the frontend
+    permission_classes = [IsAuthenticated, RolePermission]
     serializer_class = sz.AuditLogSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ['company', 'user', 'action', 'model_name']
@@ -1153,13 +1145,13 @@ class AuditViewSet(PermMixin, viewsets.ReadOnlyModelViewSet):
         return Response(svc.verify_audit_chain())
 
 
-reg('alerts', m.Alert, 'ai', filters_=('kind', 'severity', 'is_resolved'))
+reg('alerts', m.Alert, filters_=('kind', 'severity', 'is_resolved'))
 
 
 # ====================================================================== reports, dashboard, AI
 class ReportListView(APIView):
     def get(self, request):
-        return Response([{'name': k, 'permission': p} for k, (fn, p) in svc.REPORTS.items() if request.user.has_perm_code(p)])
+        return Response([{'name': k} for k in svc.REPORTS])
 
 
 class ReportView(APIView):
@@ -1168,54 +1160,36 @@ class ReportView(APIView):
     def get(self, request, name):
         if name not in svc.REPORTS:
             raise DRFValidationError({'detail': 'Unknown report.'})
-        fn, perm = svc.REPORTS[name]
-        if not request.user.has_perm_code(perm):
-            raise PermissionDenied(f'Permission required: {perm}')
+        fn = svc.REPORTS[name][0]
         f = svc._filters(request.query_params, request.user)
         if not f['company_ids']:
             raise PermissionDenied('No authorised legal entity selected.')
         return table_response(request, fn(f))
 
 
-FINANCIAL_CARDS = {'group_revenue', 'revenue_by_country', 'total_purchases', 'operating_expenses', 'gross_profit', 'net_profit',
-                   'cash_balance', 'bank_balance', 'mpesa_balance', 'receivables', 'payables'}
-FINANCIAL_CHARTS = {'revenue_trend', 'expense_analysis', 'shipment_profitability'}
-
-
 class DashboardView(APIView):
+    """Dashboard figures. Which cards a role sees is decided in the frontend; the API returns everything
+    for the user's allowed legal entities."""
+
     def get(self, request):
         u = request.user
-        if not u.has_perm_code('reports.view'):
-            raise PermissionDenied()
         f = svc._filters(request.query_params, u)
         data = svc.dashboard_metrics(f, request.query_params.get('period', 'monthly'))
-        if not u.has_perm_code('finance.view'):          # financial figures are never sent to users without access
-            data['cards'] = {k: v for k, v in data['cards'].items() if k not in FINANCIAL_CARDS}
-            data['charts'] = {k: v for k, v in data['charts'].items() if k not in FINANCIAL_CHARTS}
-            data['summary'] = [r for r in data['summary'] if not r['finance']]
         data['summary'] = [{k: v for k, v in r.items() if k != 'finance'} for r in data['summary']]
         return Response(data)
 
 
 class AIView(APIView):
-    def _guard(self, request, write=False):
-        u = request.user
-        if not u.has_perm_code('ai.edit' if write else 'ai.view') or not (u.has_perm_code('finance.view') or u.has_perm_code('costing.view')):
-            raise PermissionDenied('AI insights need ai.view plus finance or costing access.')
-
     def post(self, request, op):
         if op == 'ask':
-            self._guard(request)
             d = sz.AIAskIn(data=request.data)
             d.is_valid(raise_exception=True)
             return Response(svc.ai_answer(d.validated_data['question'], svc._filters(request.data, request.user)))
         if op == 'scan':
-            self._guard(request, True)
             ids = svc._filters(request.data, request.user)['company_ids']
             made = svc.run_ai_scan(ids, request.user)
             return Response({'alerts_created': len(made)})
         if op == 'price-recommendation':
-            self._guard(request)
             d = sz.PriceRecIn(data=request.data)
             d.is_valid(raise_exception=True)
             v = d.validated_data
@@ -1224,7 +1198,6 @@ class AIView(APIView):
         raise DRFValidationError({'detail': 'Unknown AI operation.'})
 
     def get(self, request, op):
-        self._guard(request)
         ids = svc._filters(request.query_params, request.user)['company_ids']
         if op == 'cash-forecast':
             return Response(svc.cash_forecast(ids, int(request.query_params.get('days', 30))))

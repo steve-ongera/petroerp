@@ -1,36 +1,31 @@
-/**
- * Access helper (src/utils/access.js).
- *
- * The backend treats a user as "group admin" when is_superuser is true OR the role code is GROUP_ADMIN
- * (User.is_group_admin) and then skips every permission check. This mirrors that rule in the UI so the
- * super user always sees every menu item and can open every page, even if the Permission table was never seeded.
- *
- * UX only: the API still enforces permissions and legal-entity access on every request.
- */
-import { useCallback } from 'react';
-
+import { useCallback, useMemo } from 'react';
 import { useAuth } from '../context/AppContext';
+import { ROLES, normalizeRole, isKnownRole } from './roles';
 
-export function isSuperUser(user) {
-  if (!user) return false;
-  return Boolean(
-    user.is_superuser ||
-      user.is_group_admin ||
-      user.role === 'GROUP_ADMIN' ||
-      user.role === 'SUPERUSER',
-  );
-}
+/**
+ * Role-based access (UX gating only; the API no longer checks roles).
+ *   can(roles)  -> undefined/null : any signed-in user
+ *                  []             : Group Administrator only
+ *                  [..]           : those roles (+ Group Administrator)
+ *
+ * OPEN_UNKNOWN_ROLES: while true, a user whose role code is missing or not in ROLES
+ * sees everything, so nobody is ever locked out by a code mismatch.
+ * Set to false once every role code in the database is listed in roles.js.
+ */
+export const OPEN_UNKNOWN_ROLES = true;
 
-/** Drop-in replacement for useAuth(): same fields, plus `isAdmin` and an admin-aware `can(perm)`. */
 export function useAccess() {
-  const auth = useAuth();
-  const baseCan = auth.can;
-  const isAdmin = isSuperUser(auth.user);
+  const { user, status } = useAuth();
+  const role = normalizeRole(user?.role);
+  const isAdmin = role === ROLES.GROUP_ADMIN;
+  const openAll = isAdmin || (OPEN_UNKNOWN_ROLES && !isKnownRole(role));
 
-  const can = useCallback(
-    (perm) => isAdmin || !perm || (typeof baseCan === 'function' && baseCan(perm)),
-    [isAdmin, baseCan],
-  );
+  const can = useCallback((roles) => {
+    if (roles === undefined || roles === null) return true;
+    if (typeof roles === 'string') return true;      // legacy permission code
+    if (openAll) return true;
+    return !!role && roles.includes(role);
+  }, [role, openAll]);
 
-  return { ...auth, isAdmin, can };
+  return useMemo(() => ({ can, user, role, isAdmin, status }), [can, user, role, isAdmin, status]);
 }

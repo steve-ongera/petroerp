@@ -1,15 +1,56 @@
 /**
- * Navigation registry.
+ * Navigation registry (role based).
  *
- * Exports:
- *   visibleNav(can)       → tree for Sidebar.jsx
- *   flatNav(can)          → flat list for Navbar.jsx search
- *   allRoutes()           → [{ path, perm, page }] for App.jsx router
- *   firstAllowedPath(can) → first page the user can open (<Home/>)
- *   titleFor(pathname)    → page title for document.title
+ * Each entry carries `roles`:
+ *   undefined / null -> any signed-in user
+ *   [..]             -> only those roles
+ *   []               -> Group Administrator only
+ * The Group Administrator / super user always passes (see utils/access.js).
  *
+ * Every role set is built with `allow(...)`, which adds FULL_ACCESS_ROLES on top
+ * (same idea as `allow()` in the HMIS App.jsx). Edit FULL_ACCESS_ROLES to change
+ * who gets blanket access.
+ *
+ * Exports: visibleNav(can), flatNav(can), allRoutes(), firstAllowedPath(can), titleFor(pathname)
  * Pure data + helpers. No JSX.
  */
+import { ROLES } from './utils/roles';
+
+const {
+  MD, KE_FINANCE_MANAGER: KFM, DRC_FINANCE_MANAGER: DFM, ACCOUNTANT: ACC,
+  PROCUREMENT_MANAGER: PM, PROCUREMENT_OFFICER: PO, SALES_MANAGER: SM, SALES_OFFICER: SO,
+  FLEET_MANAGER: FLM, LOGISTICS_MANAGER: LM, STORE_MANAGER: STM, CASHIER: CSH,
+  INTERNAL_AUDITOR: AUD, READONLY_MANAGER: RO,
+} = ROLES;
+
+// Roles that can open every page. Each set below only adds the roles it was originally limited to.
+const FULL_ACCESS_ROLES = [MD, KFM, DFM, ACC];
+const allow = (...roles) => [...new Set([...roles, ...FULL_ACCESS_ROLES])];
+
+// ---- role sets (edit here to change who sees what) ----
+const COMPANY      = allow(MD, KFM, AUD);
+const FINANCE      = allow(MD, KFM, DFM, ACC, CSH, AUD);
+const CLOSE_PERIOD = allow(KFM, DFM);
+const REQUISITIONS = allow(MD, KFM, PM, PO, LM);
+const SUPPLIERS    = allow(MD, KFM, ACC, PM, PO, RO, AUD);
+const PROCUREMENT  = allow(MD, KFM, ACC, PM, PO, LM, RO, AUD);
+const RECEIPTS     = allow(MD, KFM, PM, PO, STM, LM);
+const INVENTORY    = allow(MD, KFM, DFM, ACC, PM, PO, SM, SO, FLM, LM, STM, RO, AUD);
+const CUSTOMERS    = allow(MD, DFM, ACC, SM, SO, CSH, RO, AUD);
+const SALES        = allow(MD, DFM, ACC, SM, SO, LM, RO, AUD);
+const SHIPMENTS    = allow(MD, KFM, DFM, ACC, PM, SM, SO, FLM, LM, STM, RO, AUD);
+const CUSTOMS      = allow(MD, LM, AUD);
+const FLEET        = allow(MD, KFM, FLM, LM, RO, AUD);
+const TRANSPORT    = FLEET;
+const EXPENSES     = allow(MD, KFM, DFM, ACC, FLM, LM, AUD);
+const PAYMENTS     = allow(MD, KFM, DFM, ACC, CSH, AUD);
+const ASSETS       = allow(MD, KFM, DFM, AUD);
+const PAYROLL      = allow(MD, KFM, DFM, AUD);
+const GROUP        = allow(MD, KFM, DFM, AUD);
+const REPORTS      = allow(MD, KFM, DFM, ACC, PM, SM, FLM, LM, RO, AUD);
+const AI           = allow(MD, KFM, DFM, AUD);
+const AUDIT        = allow(MD, AUD);
+const USERS        = allow(MD, AUD);
 
 export const ICON_KEYS = {
   dashboard: 'dashboard',
@@ -25,108 +66,107 @@ export const ICON_KEYS = {
 };
 
 const NAV = [
-  { label: 'Dashboard', path: '/dashboard', icon: ICON_KEYS.dashboard, perm: 'reports.view', page: 'dashboard/Dashboard' },
+  { label: 'Dashboard', path: '/dashboard', icon: ICON_KEYS.dashboard, roles: REPORTS, page: 'dashboard/Dashboard' },
 
   { group: 'Administration', icon: ICON_KEYS.admin, items: [
-    { label: 'Companies',        path: '/admin/companies',        perm: 'company.view', page: 'admin/Companies' },
-    { label: 'Structure',        path: '/admin/structure',        perm: 'company.view', page: 'admin/Structure' },
-    { label: 'Fiscal years',     path: '/admin/fiscal-years',     perm: 'finance.view', page: 'admin/FiscalYears' },
-    { label: 'Taxes',            path: '/admin/taxes',            perm: 'company.view', page: 'admin/TaxConfigs' },
-    { label: 'Currencies',       path: '/admin/currencies',       perm: 'company.view', page: 'admin/Currencies' },
-    { label: 'Account mappings', path: '/admin/account-mappings', perm: 'finance.view', page: 'admin/AccountMappings' },
-    { label: 'Policies',         path: '/admin/policies',         perm: 'company.view', page: 'admin/Policies' },
-    { label: 'Users',            path: '/admin/users',            perm: 'admin.view',   page: 'admin/Users' },
-    { label: 'Audit log',        path: '/admin/audit',            perm: 'audit.view',   page: 'admin/AuditLog' },
+    { label: 'Companies',        path: '/admin/companies',        roles: COMPANY, page: 'admin/Companies' },
+    { label: 'Structure',        path: '/admin/structure',        roles: COMPANY, page: 'admin/Structure' },
+    { label: 'Fiscal years',     path: '/admin/fiscal-years',     roles: FINANCE, page: 'admin/FiscalYears' },
+    { label: 'Taxes',            path: '/admin/taxes',            roles: COMPANY, page: 'admin/TaxConfigs' },
+    { label: 'Currencies',       path: '/admin/currencies',       roles: COMPANY, page: 'admin/Currencies' },
+    { label: 'Account mappings', path: '/admin/account-mappings', roles: FINANCE, page: 'admin/AccountMappings' },
+    { label: 'Policies',         path: '/admin/policies',         roles: COMPANY, page: 'admin/Policies' },
+    { label: 'Users',            path: '/admin/users',            roles: USERS,   page: 'admin/Users' },
+    { label: 'Audit log',        path: '/admin/audit',            roles: AUDIT,   page: 'admin/AuditLog' },
   ]},
 
   { group: 'Procurement', icon: ICON_KEYS.procurement, items: [
-    { label: 'Suppliers',         path: '/procurement/suppliers',       perm: 'suppliers.view',   page: 'procurement/Suppliers' },
-    { label: 'Contracts',         path: '/procurement/contracts',       perm: 'suppliers.view',   page: 'procurement/Contracts' },
-    { label: 'Requisitions',      path: '/procurement/requisitions',    perm: 'procurement.view', page: 'procurement/Requisitions' },
-    { label: 'Purchase orders',   path: '/procurement/purchase-orders', perm: 'procurement.view', page: 'procurement/PurchaseOrders' },
-    { label: 'Goods receipts',    path: '/procurement/receipts',        perm: 'inventory.view',   page: 'procurement/GoodsReceipts' },
-    { label: 'Purchase invoices', path: '/procurement/invoices',        perm: 'procurement.view', page: 'procurement/PurchaseInvoices' },
-    { label: 'Returns',           path: '/procurement/returns',         perm: 'procurement.view', page: 'procurement/Returns' },
+    // Order follows the buying flow: need -> source -> order -> receive -> bill.
+    { label: 'Requisitions',      path: '/procurement/requisitions',    roles: REQUISITIONS, page: 'procurement/Requisitions' },
+    { label: 'Suppliers',         path: '/procurement/suppliers',       roles: SUPPLIERS,    page: 'procurement/Suppliers' },
+    { label: 'Contracts',         path: '/procurement/contracts',       roles: SUPPLIERS,    page: 'procurement/Contracts' },
+    { label: 'Purchase orders',   path: '/procurement/purchase-orders', roles: PROCUREMENT,  page: 'procurement/PurchaseOrders' },
+    { label: 'Goods receipts',    path: '/procurement/receipts',        roles: RECEIPTS,     page: 'procurement/GoodsReceipts' },
+    { label: 'Purchase invoices', path: '/procurement/invoices',        roles: PROCUREMENT,  page: 'procurement/PurchaseInvoices' },
+    { label: 'Returns',           path: '/procurement/returns',         roles: PROCUREMENT,  page: 'procurement/Returns' },
   ]},
 
   { group: 'Inventory', icon: ICON_KEYS.inventory, items: [
-    { label: 'Products',       path: '/inventory/products',       perm: 'inventory.view', page: 'inventory/Products' },
-    { label: 'Tanks & depots', path: '/inventory/tanks',          perm: 'inventory.view', page: 'inventory/Tanks' },
-    { label: 'Stock',          path: '/inventory/stock',          perm: 'inventory.view', page: 'inventory/Stock' },
-    { label: 'Adjustments',    path: '/inventory/adjustments',    perm: 'inventory.view', page: 'inventory/Adjustments' },
-    { label: 'Reconciliation', path: '/inventory/reconciliation', perm: 'inventory.view', page: 'inventory/Reconciliation' },
+    { label: 'Products',       path: '/inventory/products',       roles: INVENTORY, page: 'inventory/Products' },
+    { label: 'Tanks & depots', path: '/inventory/tanks',          roles: INVENTORY, page: 'inventory/Tanks' },
+    { label: 'Stock',          path: '/inventory/stock',          roles: INVENTORY, page: 'inventory/Stock' },
+    { label: 'Adjustments',    path: '/inventory/adjustments',    roles: INVENTORY, page: 'inventory/Adjustments' },
+    { label: 'Reconciliation', path: '/inventory/reconciliation', roles: INVENTORY, page: 'inventory/Reconciliation' },
   ]},
 
   { group: 'Sales', icon: ICON_KEYS.sales, items: [
-    { label: 'Customers',      path: '/sales/customers',    perm: 'customers.view', page: 'sales/Customers' },
-    { label: 'Contracts',      path: '/sales/contracts',    perm: 'sales.view',     page: 'sales/Contracts' },
-    { label: 'Pricing',        path: '/sales/pricing',      perm: 'sales.view',     page: 'sales/Pricing' },
-    { label: 'Sales orders',   path: '/sales/orders',       perm: 'sales.view',     page: 'sales/SalesOrders' },
-    { label: 'Sales invoices', path: '/sales/invoices',     perm: 'sales.view',     page: 'sales/SalesInvoices' },
-    { label: 'Credit notes',   path: '/sales/credit-notes', perm: 'sales.view',     page: 'sales/CreditNotes' },
+    { label: 'Customers',      path: '/sales/customers',    roles: CUSTOMERS, page: 'sales/Customers' },
+    { label: 'Contracts',      path: '/sales/contracts',    roles: SALES,     page: 'sales/Contracts' },
+    { label: 'Pricing',        path: '/sales/pricing',      roles: SALES,     page: 'sales/Pricing' },
+    { label: 'Sales orders',   path: '/sales/orders',       roles: SALES,     page: 'sales/SalesOrders' },
+    { label: 'Sales invoices', path: '/sales/invoices',     roles: SALES,     page: 'sales/SalesInvoices' },
+    { label: 'Credit notes',   path: '/sales/credit-notes', roles: SALES,     page: 'sales/CreditNotes' },
   ]},
 
   { group: 'Logistics', icon: ICON_KEYS.logistics, items: [
-    { label: 'Shipments',            path: '/logistics/shipments',            perm: 'shipments.view', page: 'logistics/Shipments' },
-    { label: 'Customs',              path: '/logistics/customs',              perm: 'customs.view',   page: 'logistics/Customs' },
-    { label: 'Vehicles',             path: '/logistics/vehicles',             perm: 'fleet.view',     page: 'logistics/Vehicles' },
-    { label: 'Drivers',              path: '/logistics/drivers',              perm: 'fleet.view',     page: 'logistics/Drivers' },
-    { label: 'Maintenance',          path: '/logistics/maintenance',          perm: 'fleet.view',     page: 'logistics/Maintenance' },
-    { label: 'Transporters',         path: '/logistics/transporters',         perm: 'transport.view', page: 'logistics/Transporters' },
-    { label: 'Bookings',             path: '/logistics/bookings',             perm: 'transport.view', page: 'logistics/Bookings' },
-    { label: 'Transporter invoices', path: '/logistics/transporter-invoices', perm: 'transport.view', page: 'logistics/TransporterInvoices' },
+    { label: 'Shipments',            path: '/logistics/shipments',            roles: SHIPMENTS, page: 'logistics/Shipments' },
+    { label: 'Customs',              path: '/logistics/customs',              roles: CUSTOMS,   page: 'logistics/Customs' },
+    { label: 'Vehicles',             path: '/logistics/vehicles',             roles: FLEET,     page: 'logistics/Vehicles' },
+    { label: 'Drivers',              path: '/logistics/drivers',              roles: FLEET,     page: 'logistics/Drivers' },
+    { label: 'Maintenance',          path: '/logistics/maintenance',          roles: FLEET,     page: 'logistics/Maintenance' },
+    { label: 'Transporters',         path: '/logistics/transporters',         roles: TRANSPORT, page: 'logistics/Transporters' },
+    { label: 'Bookings',             path: '/logistics/bookings',             roles: TRANSPORT, page: 'logistics/Bookings' },
+    { label: 'Transporter invoices', path: '/logistics/transporter-invoices', roles: TRANSPORT, page: 'logistics/TransporterInvoices' },
   ]},
 
   { group: 'Finance', icon: ICON_KEYS.finance, items: [
-    { label: 'Expenses',     path: '/finance/expenses', perm: 'expenses.view', page: 'finance/Expenses' },
-    { label: 'Payments',     path: '/finance/payments', perm: 'payments.view', page: 'finance/Payments' },
-    { label: 'Bank',         path: '/finance/bank',     perm: 'payments.view', page: 'finance/Bank' },
-    { label: 'Accounts',     path: '/finance/accounts', perm: 'finance.view',  page: 'finance/Accounts' },
-    { label: 'Journals',     path: '/finance/journals', perm: 'finance.view',  page: 'finance/Journals' },
-    { label: 'Fixed assets', path: '/finance/assets',   perm: 'assets.view',   page: 'finance/FixedAssets' },
-    { label: 'Payroll',      path: '/finance/payroll',  perm: 'hr.view',       page: 'finance/Payroll' },
+    { label: 'Expenses',     path: '/finance/expenses', roles: EXPENSES, page: 'finance/Expenses' },
+    { label: 'Payments',     path: '/finance/payments', roles: PAYMENTS, page: 'finance/Payments' },
+    { label: 'Bank',         path: '/finance/bank',     roles: PAYMENTS, page: 'finance/Bank' },
+    { label: 'Accounts',     path: '/finance/accounts', roles: FINANCE,  page: 'finance/Accounts' },
+    { label: 'Journals',     path: '/finance/journals', roles: FINANCE,  page: 'finance/Journals' },
+    { label: 'Fixed assets', path: '/finance/assets',   roles: ASSETS,   page: 'finance/FixedAssets' },
+    { label: 'Payroll',      path: '/finance/payroll',  roles: PAYROLL,  page: 'finance/Payroll' },
   ]},
 
   { group: 'Group', icon: ICON_KEYS.group, items: [
-    { label: 'Intercompany',   path: '/group/intercompany',  perm: 'group.view', page: 'group/Intercompany' },
-    { label: 'Consolidation',  path: '/group/consolidation', perm: 'group.view', page: 'group/Consolidation' },
-    { label: 'FX revaluation', path: '/group/fx',            perm: 'finance.close_period', page: 'group/FxRevaluation' },
+    { label: 'Intercompany',   path: '/group/intercompany',  roles: GROUP,        page: 'group/Intercompany' },
+    { label: 'Consolidation',  path: '/group/consolidation', roles: GROUP,        page: 'group/Consolidation' },
+    { label: 'FX revaluation', path: '/group/fx',            roles: CLOSE_PERIOD, page: 'group/FxRevaluation' },
   ]},
 
   { group: 'Intelligence', icon: ICON_KEYS.reports, items: [
-    { label: 'Reports',      path: '/reports', perm: 'reports.view', page: 'reports/Reports' },
-    { label: 'AI assistant', path: '/ai',      perm: 'ai.view',      page: 'ai/Assistant' },
+    { label: 'Reports',      path: '/reports', roles: REPORTS, page: 'reports/Reports' },
+    { label: 'AI assistant', path: '/ai',      roles: AI,      page: 'ai/Assistant' },
   ]},
 
-  { label: 'Approvals',     path: '/approvals',     icon: 'check', perm: null, page: 'admin/Approvals' },
-  { label: 'Notifications', path: '/notifications', icon: 'bell',  perm: null, page: 'admin/Notifications' },
-  { label: 'Profile',       path: '/profile',       icon: 'user',  perm: null, page: 'auth/Profile' },
+  { label: 'Approvals',     path: '/approvals',     icon: 'check', roles: null, page: 'admin/Approvals' },
+  { label: 'Notifications', path: '/notifications', icon: 'bell',  roles: null, page: 'admin/Notifications' },
+  { label: 'Profile',       path: '/profile',       icon: 'user',  roles: null, page: 'auth/Profile' },
 ];
 
-/**
- * Detail routes (not in the sidebar, but need a permission + page key).
- * Update these when you add new detail pages in App.jsx / navigation.js.
- */
+/** Detail routes (not in the sidebar, but need roles + a page key). */
 const DETAIL_ROUTES = [
-  { path: '/procurement/suppliers/:id',        perm: 'suppliers.view',   page: 'procurement/SupplierDetail' },
-  { path: '/procurement/purchase-orders/:id',  perm: 'procurement.view', page: 'procurement/PurchaseOrderDetail' },
-  { path: '/sales/customers/:id',              perm: 'customers.view',   page: 'sales/CustomerDetail' },
-  { path: '/sales/orders/:id',                 perm: 'sales.view',       page: 'sales/SalesOrderDetail' },
-  { path: '/sales/invoices/:id',               perm: 'sales.view',       page: 'sales/SalesInvoiceDetail' },
-  { path: '/logistics/shipments/:id',          perm: 'shipments.view',   page: 'logistics/ShipmentDetail' },
+  { path: '/procurement/requisitions/:id',    roles: REQUISITIONS, page: 'procurement/RequisitionDetail' },
+  { path: '/procurement/suppliers/:id',       roles: SUPPLIERS,    page: 'procurement/SupplierDetail' },
+  { path: '/procurement/purchase-orders/:id', roles: PROCUREMENT,  page: 'procurement/PurchaseOrderDetail' },
+  { path: '/sales/customers/:id',             roles: CUSTOMERS,    page: 'sales/CustomerDetail' },
+  { path: '/sales/orders/:id',                roles: SALES,        page: 'sales/SalesOrderDetail' },
+  { path: '/sales/invoices/:id',              roles: SALES,        page: 'sales/SalesInvoiceDetail' },
+  { path: '/logistics/shipments/:id',         roles: SHIPMENTS,    page: 'logistics/ShipmentDetail' },
 ];
 
 /* ------------------------------------------------------------------ helpers */
 
-const can = (canFn, perm) => !perm || (typeof canFn === 'function' && canFn(perm));
+const can = (canFn, roles) => roles == null || (typeof canFn === 'function' && canFn(roles));
 
 export function visibleNav(canFn) {
   const out = [];
   for (const node of NAV) {
     if (node.group) {
-      const items = node.items.filter((i) => can(canFn, i.perm));
+      const items = node.items.filter((i) => can(canFn, i.roles));
       if (items.length) out.push({ group: node.group, icon: node.icon, items });
-    } else if (can(canFn, node.perm)) {
+    } else if (can(canFn, node.roles)) {
       out.push({ label: node.label, path: node.path, icon: node.icon });
     }
   }
@@ -138,10 +178,10 @@ export function flatNav(canFn) {
   for (const node of NAV) {
     if (node.group) {
       for (const it of node.items) {
-        if (can(canFn, it.perm)) rows.push({ label: it.label, path: it.path, perm: it.perm || null });
+        if (can(canFn, it.roles)) rows.push({ label: it.label, path: it.path, roles: it.roles ?? null });
       }
-    } else if (can(canFn, node.perm)) {
-      rows.push({ label: node.label, path: node.path, perm: node.perm || null });
+    } else if (can(canFn, node.roles)) {
+      rows.push({ label: node.label, path: node.path, roles: node.roles ?? null });
     }
   }
   return rows;
@@ -152,9 +192,9 @@ export function allRoutes() {
   const rows = [];
   for (const node of NAV) {
     if (node.group) {
-      for (const it of node.items) rows.push({ path: it.path, perm: it.perm, page: it.page });
+      for (const it of node.items) rows.push({ path: it.path, roles: it.roles, page: it.page });
     } else {
-      rows.push({ path: node.path, perm: node.perm, page: node.page });
+      rows.push({ path: node.path, roles: node.roles, page: node.page });
     }
   }
   for (const r of DETAIL_ROUTES) rows.push(r);
@@ -164,8 +204,8 @@ export function allRoutes() {
 export function firstAllowedPath(canFn) {
   for (const node of NAV) {
     if (node.group) {
-      for (const it of node.items) if (can(canFn, it.perm)) return it.path;
-    } else if (can(canFn, node.perm)) {
+      for (const it of node.items) if (can(canFn, it.roles)) return it.path;
+    } else if (can(canFn, node.roles)) {
       return node.path;
     }
   }
@@ -184,7 +224,6 @@ export function titleFor(pathname) {
   for (const r of DETAIL_ROUTES) {
     const re = new RegExp('^' + r.path.replace(/:[^/]+/g, '[^/]+') + '$');
     if (re.test(pathname)) {
-      // Title from path segment, e.g. ".../:id" → "Supplier"
       const base = r.path.replace(/:\w+/g, '').replace(/\/+$/, '').split('/').pop() || '';
       return base.charAt(0).toUpperCase() + base.slice(1);
     }

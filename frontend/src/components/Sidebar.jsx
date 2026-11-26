@@ -3,6 +3,7 @@ import { Link, NavLink, useLocation } from 'react-router-dom';
 
 import { visibleNav } from '../navigation';
 import { useAccess } from '../utils/access';
+import { normalizeRole } from '../utils/roles';
 
 /** navigation.js icon key -> Bootstrap Icons class */
 export const ICONS = {
@@ -42,8 +43,9 @@ const prefersReducedMotion = () =>
  * Dropdown groups are OPEN by default; click a header to close it. The group that
  * contains the current page is always re-opened on navigation.
  *
- * The super user / Group Administrator sees EVERY menu group and item (useAccess().can returns true for admins),
- * mirroring the backend where User.is_group_admin bypasses all permission checks.
+ * Menu visibility comes from visibleNav(can). The super user / Group Administrator sees EVERY group and item
+ * (useAccess().can returns true for admins). Roles are enforced in the frontend only; the API requires sign-in
+ * and applies company scoping.
  */
 export default function Sidebar({ isDesktop = true, collapsed = false, mobileOpen = false, onClose }) {
   const { can, user, isAdmin } = useAccess();
@@ -148,7 +150,7 @@ export default function Sidebar({ isDesktop = true, collapsed = false, mobileOpe
 
   const closeIfDrawer = !isDesktop ? onClose : undefined;
   const displayName = user?.full_name || user?.name || user?.username || 'Account';
-  const role = isAdmin ? 'Super user · Full access' : (user?.role_name || user?.role || '');
+  const role = isAdmin ? 'Super user · Full access' : (user?.role_name || normalizeRole(user?.role) || '');
 
   return (
     <>

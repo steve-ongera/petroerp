@@ -6,6 +6,8 @@ Rules enforced here (never in the frontend):
   * every multi-record operation is @transaction.atomic
   * the costing engine only READS expense allocations -> no double counting
   * AI helpers only read data and create Alerts; they never approve or post
+
+Access control is ROLE based (Role.code). The role sets below are mirrored in src/navigation.js.
 """
 import csv
 import hashlib
@@ -44,6 +46,41 @@ def dec(x):
     return Decimal(str(x if x not in (None, '') else 0))
 
 
+# =========================================================== role sets (replace the old permission codes)
+# Role.code values. Group Administrator / superuser always passes (User.is_group_admin).
+# Keep these in step with src/navigation.js.
+FINANCE_VIEW_ROLES = ('MD', 'KE_FINANCE_MANAGER', 'DRC_FINANCE_MANAGER', 'ACCOUNTANT', 'CASHIER', 'INTERNAL_AUDITOR')
+REPORTS_VIEW_ROLES = ('MD', 'KE_FINANCE_MANAGER', 'DRC_FINANCE_MANAGER', 'ACCOUNTANT', 'PROCUREMENT_MANAGER', 'SALES_MANAGER',
+                      'FLEET_MANAGER', 'LOGISTICS_MANAGER', 'READONLY_MANAGER', 'INTERNAL_AUDITOR')
+COSTING_VIEW_ROLES = ('MD', 'KE_FINANCE_MANAGER', 'DRC_FINANCE_MANAGER', 'ACCOUNTANT', 'SALES_MANAGER', 'LOGISTICS_MANAGER',
+                      'INTERNAL_AUDITOR')
+GROUP_VIEW_ROLES = ('MD', 'KE_FINANCE_MANAGER', 'DRC_FINANCE_MANAGER', 'INTERNAL_AUDITOR')
+AI_VIEW_ROLES = GROUP_VIEW_ROLES
+AI_EDIT_ROLES = ('MD', 'KE_FINANCE_MANAGER', 'DRC_FINANCE_MANAGER')
+AUDIT_VIEW_ROLES = ('MD', 'INTERNAL_AUDITOR')
+ADMIN_VIEW_ROLES = ('MD', 'INTERNAL_AUDITOR')                 # may READ users/roles; only Group Admin may write
+
+# named actions (were: approvals.decide, finance.post, ...)
+APPROVER_ROLES = ('MD', 'KE_FINANCE_MANAGER', 'DRC_FINANCE_MANAGER', 'PROCUREMENT_MANAGER', 'SALES_MANAGER', 'LOGISTICS_MANAGER')
+FINANCE_POST_ROLES = ('KE_FINANCE_MANAGER', 'DRC_FINANCE_MANAGER', 'ACCOUNTANT')
+PERIOD_CLOSE_ROLES = ('KE_FINANCE_MANAGER', 'DRC_FINANCE_MANAGER')
+COSTING_FINALIZE_ROLES = ('KE_FINANCE_MANAGER', 'DRC_FINANCE_MANAGER')
+PAYMENT_EXECUTE_ROLES = ('ACCOUNTANT',)
+CREDIT_OVERRIDE_ROLES = ('DRC_FINANCE_MANAGER', 'SALES_MANAGER')
+MATCH_OVERRIDE_ROLES = ('PROCUREMENT_MANAGER',)
+BELOW_MARGIN_ROLES = ('SALES_MANAGER',)
+STOCK_ADJUST_ROLES = ('STORE_MANAGER',)
+COMPANY_EDIT_ROLES = ('KE_FINANCE_MANAGER',)
+GROUP_EDIT_ROLES = ()                                          # () = Group Administrator only (same as before)
+
+
+def has_role(user, roles):
+    """True for Group Administrator/superuser, or when the user's Role.code is in `roles`."""
+    if user.is_group_admin:
+        return True
+    return bool(user.role_id and user.role.code in roles)
+
+
 # =========================================================== numbering
 @transaction.atomic
 def next_reference(company, doc_type, on_date=None, short=False):
@@ -79,10 +116,10 @@ def verify_audit_chain():
     return {'ok': not bad, 'tampered_ids': bad}
 
 
-def notify_perm(company, perm, title, message='', level='INFO', link=''):
+def notify_roles(company, roles, title, message='', level='INFO', link=''):
     users = User.objects.filter(is_active=True).filter(
         Q(is_superuser=True) | Q(role__code='GROUP_ADMIN') |
-        Q(role__permissions__code=perm, companies=company)).distinct()
+        Q(role__code__in=roles, companies=company)).distinct()
     Notification.objects.bulk_create([Notification(user=u, company=company, title=title, message=message,
                                                    level=level, link=link) for u in users])
 
@@ -325,7 +362,7 @@ def request_approval(obj, user, summary=''):
     req = ApprovalRequest.objects.create(company=obj.company, doc_type=name, content_type=ct, object_id=obj.pk,
                                          summary=(summary or str(obj))[:200], amount=_amount_of(obj), created_by=user)
     ApprovalAction.objects.create(request=req, actor=user, action='SUBMITTED')
-    notify_perm(obj.company, 'approvals.decide', f'Approval needed: {name} {obj}', summary, link='/approvals')
+    notify_roles(obj.company, APPROVER_ROLES, f'Approval needed: {name} {obj}', summary, link='/approvals')
     audit(user, 'SUBMIT_APPROVAL', obj, {'amount': req.amount})
     return req
 
@@ -790,9 +827,9 @@ def estimate_cost_per_litre(company, product):
 
 def check_min_margin(company, product, margin_pct, user):
     floor = product.min_margin_pct if product.min_margin_pct is not None else company.min_margin_pct
-    if margin_pct is not None and margin_pct < floor and not user.has_perm_code('sales.below_margin'):
+    if margin_pct is not None and margin_pct < floor and not has_role(user, BELOW_MARGIN_ROLES):
         err(f'Margin {margin_pct}% is below the minimum approved margin {floor}% for {product.name}. '
-            f'Authorisation (sales.below_margin) is required.')
+            f'Only these roles may go below it: {", ".join(BELOW_MARGIN_ROLES)}.')
 
 
 def apply_line_pricing(company, line, contract, order_date, user):
@@ -1579,7 +1616,7 @@ def record_delivery(sh, user, *, delivered_quantity, delivery_date=None, is_fina
         status='PENDING_APPROVAL' if needs_approval else 'APPROVED')
     if needs_approval:
         request_approval(d, user, f'Delivery shortage {shortage} L ({pct}%) on {sh.reference}')
-        notify_perm(sh.company, 'approvals.decide', f'Shipment variance {sh.reference}', f'{shortage} L short', 'WARNING')
+        notify_roles(sh.company, APPROVER_ROLES, f'Shipment variance {sh.reference}', f'{shortage} L short', 'WARNING')
     else:
         _post_delivery(d, user)
     audit(user, 'RECORD_DELIVERY', d, {'qty': qty, 'shortage': shortage})
@@ -2374,24 +2411,25 @@ def report_vehicle_expenses(f): return _expense_by(f, 'Vehicle Expenses', vehicl
 def report_driver_expenses(f): return _expense_by(f, 'Driver Expenses', category__cost_component='DRIVER')
 
 
-REPORTS = {   # name -> (function, permission)
-    'trial-balance': (report_trial_balance, 'finance.view'), 'general-ledger': (report_general_ledger, 'finance.view'),
-    'profit-and-loss': (report_profit_and_loss, 'finance.view'), 'financial-position': (report_financial_position, 'finance.view'),
-    'cash-flow': (report_cash_flow, 'finance.view'), 'equity-changes': (report_equity_changes, 'finance.view'),
-    'ar-aging': (report_ar_aging, 'finance.view'), 'ap-aging': (report_ap_aging, 'finance.view'),
-    'bank-reconciliation': (report_bank_reconciliation, 'finance.view'), 'vat': (report_vat, 'finance.view'),
-    'daily-operations': (report_daily_operations, 'reports.view'), 'daily-shipments': (report_daily_shipments, 'reports.view'),
-    'fuel-purchases': (report_fuel_purchases, 'reports.view'), 'fuel-sales': (report_fuel_sales, 'reports.view'),
-    'tank-reconciliation': (report_tank_reconciliation, 'reports.view'), 'inventory-movement': (report_inventory_movement, 'reports.view'),
-    'stock-valuation': (report_stock_valuation, 'reports.view'), 'shipment-costing': (report_shipment_costing, 'costing.view'),
-    'fuel-variance': (report_fuel_variance, 'reports.view'), 'owned-fleet': (report_owned_fleet, 'reports.view'),
-    'hired-fleet': (report_hired_fleet, 'reports.view'), 'vehicle-expenses': (report_vehicle_expenses, 'reports.view'),
-    'trip-costs': (report_trip_costs, 'costing.view'), 'driver-expenses': (report_driver_expenses, 'reports.view'),
-    'vehicle-profitability': (report_vehicle_profitability, 'costing.view'),
-    'customer-profitability': (report_customer_profitability, 'costing.view'), 'product-profitability': (report_product_profitability, 'costing.view'),
-    'shipment-profitability': (report_shipment_profitability, 'costing.view'), 'transporter-profitability': (report_transporter_profitability, 'costing.view'),
-    'country-profitability': (report_country_profitability, 'finance.view'), 'entity-profitability': (report_entity_profitability, 'finance.view'),
-    'group-consolidated': (report_group_consolidated, 'group.view'),
+_F, _R, _C, _G = FINANCE_VIEW_ROLES, REPORTS_VIEW_ROLES, COSTING_VIEW_ROLES, GROUP_VIEW_ROLES
+REPORTS = {   # name -> (function, roles allowed to run it)
+    'trial-balance': (report_trial_balance, _F), 'general-ledger': (report_general_ledger, _F),
+    'profit-and-loss': (report_profit_and_loss, _F), 'financial-position': (report_financial_position, _F),
+    'cash-flow': (report_cash_flow, _F), 'equity-changes': (report_equity_changes, _F),
+    'ar-aging': (report_ar_aging, _F), 'ap-aging': (report_ap_aging, _F),
+    'bank-reconciliation': (report_bank_reconciliation, _F), 'vat': (report_vat, _F),
+    'daily-operations': (report_daily_operations, _R), 'daily-shipments': (report_daily_shipments, _R),
+    'fuel-purchases': (report_fuel_purchases, _R), 'fuel-sales': (report_fuel_sales, _R),
+    'tank-reconciliation': (report_tank_reconciliation, _R), 'inventory-movement': (report_inventory_movement, _R),
+    'stock-valuation': (report_stock_valuation, _R), 'shipment-costing': (report_shipment_costing, _C),
+    'fuel-variance': (report_fuel_variance, _R), 'owned-fleet': (report_owned_fleet, _R),
+    'hired-fleet': (report_hired_fleet, _R), 'vehicle-expenses': (report_vehicle_expenses, _R),
+    'trip-costs': (report_trip_costs, _C), 'driver-expenses': (report_driver_expenses, _R),
+    'vehicle-profitability': (report_vehicle_profitability, _C),
+    'customer-profitability': (report_customer_profitability, _C), 'product-profitability': (report_product_profitability, _C),
+    'shipment-profitability': (report_shipment_profitability, _C), 'transporter-profitability': (report_transporter_profitability, _C),
+    'country-profitability': (report_country_profitability, _F), 'entity-profitability': (report_entity_profitability, _F),
+    'group-consolidated': (report_group_consolidated, _G),
 }
 
 
@@ -2411,7 +2449,7 @@ def dashboard_metrics(f, period='monthly'):
       cards    : single numbers (financial + operational)
       charts   : revenue_trend (line), expense_analysis (donut), shipment_profitability (bar), shipment_status (donut fallback)
       summary  : rows for the summary table (share of revenue is computed here)
-    DashboardView strips the financial parts for users without finance.view.
+    DashboardView strips the financial parts for users without finance access.
     """
     ids, end = f['company_ids'], f['date_to']
     start = f['date_from'] or {'daily': end, 'weekly': end - timedelta(days=6), 'monthly': end.replace(day=1),
@@ -2719,31 +2757,7 @@ def ai_answer(question, f):
     return {'intent': 'unknown', 'answer': 'I can answer questions on shipment profit, transporter cost, border spend, overdue customers, entity profit, top expenses, fuel losses and cash projection.', 'data': []}
 
 
-# =========================================================== roles & permissions
-MODULES = ['company', 'suppliers', 'procurement', 'inventory', 'customers', 'sales', 'fleet', 'transport', 'shipments',
-           'customs', 'expenses', 'costing', 'finance', 'payments', 'group', 'hr', 'assets', 'reports', 'ai', 'audit', 'admin']
-EXTRA_PERMS = ['approvals.decide', 'payments.approve', 'payments.execute', 'finance.post', 'finance.close_period',
-               'sales.below_margin', 'procurement.override_match', 'credit.override', 'inventory.adjust', 'costing.finalize']
-ALL_PERMS = [f'{m}.{a}' for m in MODULES for a in ('view', 'edit')] + EXTRA_PERMS
-_v = lambda *m: [f'{x}.view' for x in m]
-_e = lambda *m: [f'{x}.{a}' for x in m for a in ('view', 'edit')]
-ROLE_PERMISSIONS = {
-    'GROUP_ADMIN': ALL_PERMS,
-    'MD': [p for p in ALL_PERMS if p.endswith('.view')] + ['approvals.decide', 'payments.approve', 'ai.edit'],
-    'KE_FINANCE_MANAGER': _e('finance', 'payments', 'expenses', 'costing', 'assets', 'hr', 'reports', 'ai', 'company') + _v('suppliers', 'procurement', 'inventory', 'shipments', 'group', 'transport', 'fleet') + ['approvals.decide', 'payments.approve', 'finance.post', 'finance.close_period', 'costing.finalize'],
-    'DRC_FINANCE_MANAGER': _e('finance', 'payments', 'expenses', 'costing', 'assets', 'hr', 'reports', 'ai', 'customers') + _v('sales', 'inventory', 'shipments', 'group') + ['approvals.decide', 'payments.approve', 'finance.post', 'finance.close_period', 'costing.finalize', 'credit.override'],
-    'ACCOUNTANT': _e('finance', 'expenses', 'payments', 'costing', 'reports') + _v('suppliers', 'customers', 'procurement', 'sales', 'shipments', 'inventory') + ['finance.post', 'payments.execute'],
-    'PROCUREMENT_MANAGER': _e('suppliers', 'procurement', 'inventory') + _v('reports', 'shipments') + ['approvals.decide', 'procurement.override_match'],
-    'PROCUREMENT_OFFICER': _e('suppliers', 'procurement') + _v('inventory'),
-    'SALES_MANAGER': _e('customers', 'sales') + _v('shipments', 'inventory', 'reports', 'costing') + ['approvals.decide', 'sales.below_margin', 'credit.override'],
-    'SALES_OFFICER': _e('customers', 'sales') + _v('inventory', 'shipments'),
-    'FLEET_MANAGER': _e('fleet', 'transport', 'expenses', 'shipments') + _v('inventory', 'reports'),
-    'LOGISTICS_MANAGER': _e('shipments', 'customs', 'transport', 'fleet', 'expenses') + _v('inventory', 'procurement', 'sales', 'reports', 'costing') + ['approvals.decide'],
-    'STORE_MANAGER': _e('inventory') + _v('procurement', 'shipments') + ['inventory.adjust'],
-    'CASHIER': _e('payments') + _v('customers', 'finance'),
-    'INTERNAL_AUDITOR': [p for p in ALL_PERMS if p.endswith('.view')],
-    'READONLY_MANAGER': _v('suppliers', 'procurement', 'inventory', 'customers', 'sales', 'fleet', 'transport', 'shipments', 'reports'),
-}
+# =========================================================== roles (no permission table any more)
 ROLE_NAMES = {'GROUP_ADMIN': 'Group Administrator', 'MD': 'Managing Director', 'KE_FINANCE_MANAGER': 'Kenya Finance Manager',
               'DRC_FINANCE_MANAGER': 'DRC Finance Manager', 'ACCOUNTANT': 'Accountant', 'PROCUREMENT_MANAGER': 'Procurement Manager',
               'PROCUREMENT_OFFICER': 'Procurement Officer', 'SALES_MANAGER': 'Sales Manager', 'SALES_OFFICER': 'Sales Officer',
@@ -2752,8 +2766,6 @@ ROLE_NAMES = {'GROUP_ADMIN': 'Group Administrator', 'MD': 'Managing Director', '
 
 
 def seed_roles():
-    for code in ALL_PERMS:
-        Permission.objects.get_or_create(code=code)
-    for code, perms in ROLE_PERMISSIONS.items():
-        role, _ = Role.objects.get_or_create(code=code, defaults={'name': ROLE_NAMES[code]})
-        role.permissions.set(Permission.objects.filter(code__in=set(perms)))
+    """Creates the Role rows only. What each role can open is defined in src/navigation.js and the role sets above."""
+    for code, name in ROLE_NAMES.items():
+        Role.objects.get_or_create(code=code, defaults={'name': name})
