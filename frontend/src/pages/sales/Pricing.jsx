@@ -6,14 +6,15 @@
  * Mirrors svc.calc_price: FIXED / MARKET / COST_PLUS (exactly one of profit/markup/margin).
  */
 import { useState } from 'react';
-import { useApp } from '../../context/AppContext';
-import api, { errorMessage } from '../../services/api';
+import api, { errorMessage, fieldErrors } from '../../services/api';
+import Field from '../../components/Field';
+import { SectionHeader, SectionBody, KV, EmptyState } from '../../components/PageSection';
 
 const METHODS = ['FIXED', 'MARKET', 'COST_PLUS'];
 const fmt = (n) => (n == null || n === '' ? '—' : Number(n).toFixed(6));
+const pct = (n) => (n != null ? Number(n).toFixed(3) : '—');
 
 export default function Pricing() {
-  const { notify } = useApp();
   const [form, setForm] = useState({
     method: 'FIXED', cost: '', contract_price: '', base_price: '', premium: '',
     profit_per_litre: '', markup_pct: '', margin_pct: '',
@@ -21,111 +22,122 @@ export default function Pricing() {
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErr, setFieldErr] = useState({});
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   const submit = async (e) => {
-    e.preventDefault(); setBusy(true); setError(''); setResult(null);
+    e.preventDefault(); setBusy(true); setError(''); setFieldErr({}); setResult(null);
     try {
       const body = { method: form.method };
       ['cost', 'contract_price', 'base_price', 'premium', 'profit_per_litre', 'markup_pct', 'margin_pct']
         .forEach((k) => { if (form[k] !== '') body[k] = form[k]; });
       setResult(await api.pricing.calculate(body));
-    } catch (err) { setError(errorMessage(err)); }
+    } catch (err) { setError(errorMessage(err)); setFieldErr(fieldErrors(err)); }
     finally { setBusy(false); }
   };
 
   return (
-    <div className="app-content">
-      <header className="page-header">
-        <div className="page-header__main">
-          <h1 className="page-header__title">Pricing calculator</h1>
-          <p className="page-header__subtitle">Preview selling price, margin and markup without saving anything</p>
+    <div>
+      <div className="page-header">
+        <div className="page-header__lead">
+          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-calculator"></i></span>
+          <div className="page-header__text">
+            <h1 className="page-title">Pricing calculator</h1>
+            <p className="page-subtitle">Preview selling price, margin and markup without saving anything</p>
+          </div>
         </div>
-      </header>
+      </div>
 
       <div className="split">
-        <div className="card">
-          <div className="card__header"><h2 className="card__title">Inputs</h2></div>
-          <div className="card__body">
-            <form onSubmit={submit} className="form">
-              <div className="field">
-                <label className="label label--required">Method</label>
-                <select className="select" value={form.method} onChange={set('method')}>
-                  {METHODS.map((m) => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
-                </select>
+        <section className="page-card">
+          <SectionHeader first icon="bi-sliders" title="Inputs" />
+          <SectionBody>
+            <form onSubmit={submit}>
+              <div className="form-grid">
+                <Field label="Method" required span>
+                  <select className="form-select" value={form.method} onChange={set('method')}>
+                    {METHODS.map((m) => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
+                  </select>
+                </Field>
+
+                {form.method === 'FIXED' && (
+                  <Field label="Contract price" required err={fieldErr.contract_price} span>
+                    <input type="number" step="0.000001" className="form-control num" value={form.contract_price}
+                           onChange={set('contract_price')} required />
+                  </Field>
+                )}
+
+                {form.method === 'MARKET' && (
+                  <>
+                    <Field label="Base market price" required err={fieldErr.base_price} span>
+                      <input type="number" step="0.000001" className="form-control num" value={form.base_price}
+                             onChange={set('base_price')} required />
+                    </Field>
+                    <Field label="Premium / discount" err={fieldErr.premium} span>
+                      <input type="number" step="0.000001" className="form-control num" value={form.premium}
+                             onChange={set('premium')} />
+                      <span className="text-muted-soft" style={{ fontSize: '0.75rem' }}>Negative = discount</span>
+                    </Field>
+                  </>
+                )}
+
+                {form.method === 'COST_PLUS' && (
+                  <>
+                    <Field label="Approved cost / litre" required err={fieldErr.cost} span>
+                      <input type="number" step="0.000001" className="form-control num" value={form.cost}
+                             onChange={set('cost')} required />
+                    </Field>
+                    <Field label="Profit per litre">
+                      <input type="number" step="0.000001" className="form-control num" value={form.profit_per_litre}
+                             onChange={set('profit_per_litre')} />
+                    </Field>
+                    <Field label="Markup % (on cost)">
+                      <input type="number" step="0.001" className="form-control num" value={form.markup_pct}
+                             onChange={set('markup_pct')} />
+                    </Field>
+                    <Field label="Target margin % (on price)">
+                      <input type="number" step="0.001" className="form-control num" value={form.margin_pct}
+                             onChange={set('margin_pct')} />
+                    </Field>
+                  </>
+                )}
               </div>
-
-              {form.method === 'FIXED' && (
-                <div className="field">
-                  <label className="label label--required">Contract price</label>
-                  <input type="number" step="0.000001" className="input num" value={form.contract_price} onChange={set('contract_price')} required />
-                </div>
-              )}
-
-              {form.method === 'MARKET' && (
-                <>
-                  <div className="field">
-                    <label className="label label--required">Base market price</label>
-                    <input type="number" step="0.000001" className="input num" value={form.base_price} onChange={set('base_price')} required />
-                  </div>
-                  <div className="field">
-                    <label className="label">Premium / discount</label>
-                    <input type="number" step="0.000001" className="input num" value={form.premium} onChange={set('premium')} />
-                    <span className="field-hint">Negative = discount</span>
-                  </div>
-                </>
-              )}
 
               {form.method === 'COST_PLUS' && (
-                <>
-                  <div className="field">
-                    <label className="label label--required">Approved cost / litre</label>
-                    <input type="number" step="0.000001" className="input num" value={form.cost} onChange={set('cost')} required />
-                  </div>
-                  <div className="field">
-                    <label className="label">Profit per litre</label>
-                    <input type="number" step="0.000001" className="input num" value={form.profit_per_litre} onChange={set('profit_per_litre')} />
-                  </div>
-                  <div className="field">
-                    <label className="label">Markup % (on cost)</label>
-                    <input type="number" step="0.001" className="input num" value={form.markup_pct} onChange={set('markup_pct')} />
-                  </div>
-                  <div className="field">
-                    <label className="label">Target margin % (on price)</label>
-                    <input type="number" step="0.001" className="input num" value={form.margin_pct} onChange={set('margin_pct')} />
-                  </div>
-                  <p className="field-hint">Provide exactly one of the three; the server rejects zero or multiple.</p>
-                </>
+                <p className="text-muted-soft mt-3" style={{ fontSize: '0.8125rem' }}>
+                  Provide exactly one of the three; the server rejects zero or multiple.
+                </p>
               )}
 
-              {error && <p className="field-error" role="alert">{error}</p>}
-              <div className="form-actions">
-                <button className="btn btn-primary" disabled={busy}>{busy ? 'Calculating…' : 'Calculate'}</button>
+              {error && <div className="alert alert-danger mt-3" role="alert">{error}</div>}
+
+              <div className="mt-3">
+                <button className="btn btn-primary" disabled={busy}>
+                  <i className="bi bi-calculator"></i>
+                  {busy ? 'Calculating...' : 'Calculate'}
+                </button>
               </div>
             </form>
-          </div>
-        </div>
+          </SectionBody>
+        </section>
 
-        <div className="card">
-          <div className="card__header"><h2 className="card__title">Result</h2></div>
-          <div className="card__body">
-            {!result ? (
-              <div className="table-empty">
-                <div className="table-empty__title">No result yet</div>
-                <div>Enter values on the left and press Calculate.</div>
-              </div>
-            ) : (
-              <div className="kv">
-                <div className="kv__item"><div className="kv__label">Method</div><div className="kv__value">{result.method}</div></div>
-                <div className="kv__item"><div className="kv__label">Selling price</div><div className="kv__value">{fmt(result.selling_price)}</div></div>
-                <div className="kv__item"><div className="kv__label">Cost per litre</div><div className="kv__value">{fmt(result.cost_per_litre)}</div></div>
-                <div className="kv__item"><div className="kv__label">Profit per litre</div><div className="kv__value">{fmt(result.profit_per_litre)}</div></div>
-                <div className="kv__item"><div className="kv__label">Markup %</div><div className="kv__value">{result.markup_pct != null ? Number(result.markup_pct).toFixed(3) : '—'}</div></div>
-                <div className="kv__item"><div className="kv__label">Margin %</div><div className="kv__value">{result.margin_pct != null ? Number(result.margin_pct).toFixed(3) : '—'}</div></div>
-              </div>
-            )}
-          </div>
-        </div>
+        <section className="page-card">
+          <SectionHeader first icon="bi-graph-up" title="Result" />
+          {!result ? (
+            <EmptyState icon="bi-calculator" title="No result yet" text="Enter values on the left and press Calculate." />
+          ) : (
+            <SectionBody>
+              <KV items={[
+                ['Method', String(result.method).replace('_', ' ')],
+                ['Selling price', fmt(result.selling_price)],
+                ['Cost per litre', fmt(result.cost_per_litre)],
+                ['Profit per litre', fmt(result.profit_per_litre)],
+                ['Markup %', pct(result.markup_pct)],
+                ['Margin %', pct(result.margin_pct)],
+              ]} />
+            </SectionBody>
+          )}
+        </section>
       </div>
     </div>
   );

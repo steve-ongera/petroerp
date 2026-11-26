@@ -4,17 +4,31 @@
  * - GET  /customers/:id/statement/
  * - GET  /customers/:id/credit-status/
  * - POST /customers/:id/set-credit-limit/  { limit, reason }  (needs credit.override)
+ *
+ * Exports: CustomerModal (used by CustomerDetail) and ServerPagination (used by the
+ * server-paginated Sales lists). Field now comes from the shared components/Field.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth, useApp } from '../../context/AppContext';
 import api, { errorMessage, fieldErrors } from '../../services/api';
+import Modal from '../../components/Modal';
+import Field from '../../components/Field';
+import TableSkeleton from '../../components/TableSkeleton';
 
 const STATUS = ['ACTIVE', 'ON_HOLD', 'BLOCKED', 'INACTIVE'];
+const PAGE_SIZE = 25;
+
 const fmtMoney = (n, c = '') => {
   if (n == null || n === '') return '—';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
+export const customerStatusPill = (s) => {
+  if (s === 'ACTIVE') return 'status-pill--success';
+  if (s === 'ON_HOLD') return 'status-pill--warning';
+  if (s === 'BLOCKED') return 'status-pill--danger';
+  return 'status-pill--neutral';
 };
 
 export default function Customers() {
@@ -38,7 +52,7 @@ export default function Customers() {
         ...(status ? { status } : {}),
       });
       setRows(res?.results || res || []);
-      setCount(res?.count ?? (res?.results || []).length);
+      setCount(res?.count ?? (res?.results || res || []).length);
     } catch (err) { setError(errorMessage(err)); }
     finally { setLoading(false); }
   }, [companyParams, page, search, status]);
@@ -46,81 +60,153 @@ export default function Customers() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setPage(1); }, [search, status]);
 
+  const hasActiveFilters = !!(search || status);
+  const clearFilters = () => { setSearch(''); setStatus(''); };
+
   return (
-    <div className="app-content">
-      <header className="page-header">
-        <div className="page-header__main">
-          <h1 className="page-header__title">Customers</h1>
-          <p className="page-header__subtitle">
-            {activeCompanyObj ? activeCompanyObj.name : 'All entities'} · {count} customer{count === 1 ? '' : 's'}
-          </p>
+    <div>
+      <div className="page-header">
+        <div className="page-header__lead">
+          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-people"></i></span>
+          <div className="page-header__text">
+            <h1 className="page-title">Customers</h1>
+            <p className="page-subtitle">{activeCompanyObj ? activeCompanyObj.name : 'All entities'}</p>
+          </div>
         </div>
         <div className="page-header__actions">
           {can('customers.edit') && (
             <button className="btn btn-primary" onClick={() => setCreating(true)}>
-              <i className="bi bi-plus-lg" /> New customer
+              <i className="bi bi-plus-lg"></i>
+              New customer
             </button>
           )}
         </div>
-      </header>
+      </div>
 
-      <div className={`table-card ${loading ? 'is-loading' : ''}`}>
-        <div className="filters">
-          <div className="input-group">
-            <span className="input-icon"><i className="bi bi-search" /></span>
-            <input className="input" placeholder="Search code, name, tax registration…" value={search} onChange={(e) => setSearch(e.target.value)} />
+      {error && (
+        <div className="alert alert-danger" role="alert">
+          <span style={{ flex: 1 }}>{error}</span>
+          <button type="button" className="btn btn-sm btn-outline-danger" onClick={load}>Try again</button>
+        </div>
+      )}
+
+      <section className="page-card">
+        <div className="search-bar">
+          <div className="search-bar__field">
+            <i className="bi bi-search" aria-hidden="true"></i>
+            <input
+              type="text"
+              className="form-control"
+              placeholder="Search by code, name or tax registration..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="Search customers"
+            />
+            {search && (
+              <button type="button" className="search-bar__clear" onClick={() => setSearch('')} aria-label="Clear search">
+                <i className="bi bi-x-lg"></i>
+              </button>
+            )}
           </div>
-          <select className="select" value={status} onChange={(e) => setStatus(e.target.value)}>
+          <select className="form-select" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
             <option value="">All statuses</option>
             {STATUS.map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
           </select>
-          <div className="filters__spacer" />
+          {hasActiveFilters && (
+            <button className="btn btn-secondary" onClick={clearFilters}>
+              <i className="bi bi-x-lg"></i> Clear
+            </button>
+          )}
         </div>
 
-        {error ? (
-          <div className="card__body"><p className="field-error" role="alert">{error}</p>
-            <button className="btn mt-2" onClick={load}>Try again</button></div>
-        ) : !rows.length && !loading ? (
-          <div className="table-empty"><div className="table-empty__title">No customers</div>
-            <div>Add the first customer.</div></div>
-        ) : (
-          <div className="table-wrap">
-            <table className="table">
-              <thead><tr>
-                <th>Code</th><th>Name</th><th>Country</th>
-                <th className="num">Credit limit</th><th>Terms</th>
-                <th>Credit period</th><th>Status</th><th className="col-actions" />
-              </tr></thead>
-              <tbody>
-                {rows.map((c) => (
-                  <tr key={c.id}>
-                    <td className="mono">
-                      <Link to={`/sales/customers/${c.id}`} className="cell-link">{c.code}</Link>
-                    </td>
-                    <td>{c.name}</td>
-                    <td>{c.country}</td>
-                    <td className="num">{fmtMoney(c.credit_limit, c.currency)}</td>
-                    <td>{c.payment_terms || '—'}</td>
-                    <td>{c.credit_period_days} days</td>
-                    <td><span className={`status ${c.status === 'ACTIVE' ? 'status-active' : c.status === 'ON_HOLD' ? 'status-pending' : c.status === 'BLOCKED' ? 'status-rejected' : 'status-inactive'}`}>{c.status.replace('_', ' ')}</span></td>
-                    <td className="col-actions">
-                      <Link to={`/sales/customers/${c.id}`} className="row-action" title="Open">
-                        <i className="bi bi-arrow-right" />
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {hasActiveFilters && (
+          <div className="chip-row">
+            {search && (
+              <span className="filter-chip">
+                Search: "{search}"
+                <button onClick={() => setSearch('')}><i className="bi bi-x"></i></button>
+              </span>
+            )}
+            {status && (
+              <span className="filter-chip">
+                Status: {status.replace('_', ' ')}
+                <button onClick={() => setStatus('')}><i className="bi bi-x"></i></button>
+              </span>
+            )}
           </div>
         )}
 
-        <Pagination page={page} count={count} onChange={setPage} />
-      </div>
+        <div className="table-wrap__header" style={{ borderTop: '1px solid var(--border-color)' }}>
+          <span className="panel-title">
+            <i className="bi bi-list-ul text-brand"></i>
+            Customer List
+          </span>
+          <span className="chart-card__subtitle">
+            {count} customer{count !== 1 ? 's' : ''}
+          </span>
+        </div>
+
+        {loading ? (
+          <TableSkeleton rows={8} columns={8} />
+        ) : rows.length === 0 ? (
+          <div className="empty-state">
+            <i className="bi bi-people"></i>
+            <h6>{hasActiveFilters ? 'No customers match your search' : 'No customers yet'}</h6>
+            <p className="text-muted-soft">
+              {hasActiveFilters ? 'Try adjusting your search or filters' : "Click 'New customer' to add the first one"}
+            </p>
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <div className="table-responsive">
+              <table className="table table-hover mb-0">
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th>Name</th>
+                    <th>Country</th>
+                    <th className="text-right">Credit limit</th>
+                    <th>Terms</th>
+                    <th>Credit period</th>
+                    <th>Status</th>
+                    <th className="text-center" style={{ width: '6rem' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((c) => (
+                    <tr key={c.id}>
+                      <td className="cell-mono fw-600">
+                        <Link to={`/sales/customers/${c.id}`} className="text-brand">{c.code}</Link>
+                      </td>
+                      <td className="cell-name">{c.name}</td>
+                      <td>{c.country}</td>
+                      <td className="cell-num">{fmtMoney(c.credit_limit, c.currency)}</td>
+                      <td>{c.payment_terms || '—'}</td>
+                      <td>{c.credit_period_days} days</td>
+                      <td><span className={`status-pill ${customerStatusPill(c.status)}`}>{c.status.replace('_', ' ')}</span></td>
+                      <td>
+                        <div className="row-actions">
+                          <Link to={`/sales/customers/${c.id}`} className="btn btn-icon" title="Open" aria-label="Open">
+                            <i className="bi bi-arrow-right"></i>
+                          </Link>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {!loading && rows.length > 0 && <ServerPagination page={page} count={count} onChange={setPage} />}
+      </section>
 
       {creating && (
-        <CustomerModal onClose={() => setCreating(false)}
-                       onSaved={() => { setCreating(false); notify('Customer created.', 'success'); load(); }} />
+        <CustomerModal
+          onClose={() => setCreating(false)}
+          onSaved={() => { setCreating(false); notify('Customer created.', 'success'); load(); }}
+        />
       )}
     </div>
   );
@@ -156,66 +242,79 @@ export function CustomerModal({ row = {}, onClose, onSaved }) {
   };
 
   return (
-    <div className="modal" role="dialog" aria-modal="true">
-      <div className="modal__dialog modal__dialog--lg">
-        <div className="modal__header">
-          <h2 className="modal__title">{isNew ? 'New customer' : `Edit ${row.code}`}</h2>
-          <button className="modal__close" onClick={onClose} aria-label="Close"><i className="bi bi-x-lg" /></button>
+    <Modal
+      show
+      onClose={onClose}
+      title={isNew ? 'New customer' : `Edit ${row.code}`}
+      subtitle="Customer master data"
+      icon="bi-people"
+      size="lg"
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" type="submit" form="customerForm" disabled={busy}>
+            <i className="bi bi-save"></i>
+            {busy ? 'Saving...' : 'Save'}
+          </button>
+        </>
+      }
+    >
+      <form id="customerForm" onSubmit={submit}>
+        <h6 className="modal-section-title"><i className="bi bi-card-text" aria-hidden="true"></i>Customer Details</h6>
+        <div className="form-grid">
+          <Field label="Code" err={fieldErr.code}>
+            <input className="form-control font-mono" value={form.code} onChange={set('code')} disabled={!isNew}
+                   placeholder="Auto-generated if blank" />
+          </Field>
+          <Field label="Name" required err={fieldErr.name}>
+            <input className="form-control" value={form.name} onChange={set('name')} required />
+          </Field>
+          <Field label="Country"><input className="form-control" value={form.country} onChange={set('country')} /></Field>
+          <Field label="Tax registration">
+            <input className="form-control font-mono" value={form.tax_registration} onChange={set('tax_registration')} />
+          </Field>
+          <Field label="Contact person">
+            <input className="form-control" value={form.contact_person} onChange={set('contact_person')} />
+          </Field>
+          <Field label="Phone"><input className="form-control" value={form.phone} onChange={set('phone')} /></Field>
+          <Field label="Email"><input type="email" className="form-control" value={form.email} onChange={set('email')} /></Field>
+          <Field label="Status">
+            <select className="form-select" value={form.status} onChange={set('status')}>
+              {STATUS.map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+            </select>
+          </Field>
+          <Field label="Address" span>
+            <textarea className="form-control" rows={2} value={form.address} onChange={set('address')} />
+          </Field>
         </div>
-        <form onSubmit={submit}>
-          <div className="modal__body">
-            <div className="form-grid">
-              <Field label="Code" err={fieldErr.code}>
-                <input className="input mono" value={form.code} onChange={set('code')} disabled={!isNew}
-                       placeholder="Auto-generated if blank" />
-              </Field>
-              <Field label="Name" required err={fieldErr.name}>
-                <input className="input" value={form.name} onChange={set('name')} required />
-              </Field>
-              <Field label="Country"><input className="input" value={form.country} onChange={set('country')} /></Field>
-              <Field label="Tax registration"><input className="input mono" value={form.tax_registration} onChange={set('tax_registration')} /></Field>
-              <Field label="Contact person"><input className="input" value={form.contact_person} onChange={set('contact_person')} /></Field>
-              <Field label="Phone"><input className="input" value={form.phone} onChange={set('phone')} /></Field>
-              <Field label="Email"><input type="email" className="input" value={form.email} onChange={set('email')} /></Field>
-              <Field label="Currency">
-                <select className="select" value={form.currency} onChange={set('currency')}>
-                  <option value="">—</option>
-                  {currencies.map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
-                </select>
-              </Field>
-              <Field label="Credit limit"><input type="number" step="0.01" className="input num" value={form.credit_limit} onChange={set('credit_limit')} /></Field>
-              <Field label="Payment terms"><input className="input" value={form.payment_terms} onChange={set('payment_terms')} /></Field>
-              <Field label="Credit period (days)"><input type="number" min={0} className="input num" value={form.credit_period_days} onChange={set('credit_period_days')} /></Field>
-              <Field label="Status">
-                <select className="select" value={form.status} onChange={set('status')}>
-                  {STATUS.map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
-                </select>
-              </Field>
-              <Field label="Address" span><textarea className="textarea" rows={2} value={form.address} onChange={set('address')} /></Field>
-            </div>
-            {error && <p className="field-error mt-3" role="alert">{error}</p>}
-          </div>
-          <div className="modal__footer">
-            <button type="button" className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
-          </div>
-        </form>
-      </div>
-    </div>
+
+        <h6 className="modal-section-title"><i className="bi bi-credit-card" aria-hidden="true"></i>Credit & Terms</h6>
+        <div className="form-grid">
+          <Field label="Currency">
+            <select className="form-select" value={form.currency} onChange={set('currency')}>
+              <option value="">—</option>
+              {currencies.map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
+            </select>
+          </Field>
+          <Field label="Credit limit">
+            <input type="number" step="0.01" className="form-control num" value={form.credit_limit} onChange={set('credit_limit')} />
+          </Field>
+          <Field label="Payment terms">
+            <input className="form-control" value={form.payment_terms} onChange={set('payment_terms')} />
+          </Field>
+          <Field label="Credit period (days)">
+            <input type="number" min={0} className="form-control num" value={form.credit_period_days} onChange={set('credit_period_days')} />
+          </Field>
+        </div>
+
+        {error && <div className="alert alert-danger mt-3" role="alert">{error}</div>}
+      </form>
+    </Modal>
   );
 }
 
-export function Field({ label, required, err, span, children }) {
-  return (
-    <div className={`field ${span ? 'span-all' : ''} ${err ? 'has-error' : ''}`}>
-      <label className={`label ${required ? 'label--required' : ''}`}>{label}</label>
-      {children}
-      {err && <span className="field-error">{err}</span>}
-    </div>
-  );
-}
-
-export function Pagination({ page, count, onChange, size = 25 }) {
+/** Server-side pager (page + count). Used by Customers, SalesOrders and SalesInvoices. */
+export function ServerPagination({ page, count, onChange, size = PAGE_SIZE }) {
   const pages = Math.max(1, Math.ceil((count || 0) / size));
   if (count <= size) return null;
   return (

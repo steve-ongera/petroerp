@@ -9,41 +9,57 @@
  * (server applies apply_line_pricing and enforces minimum margin).
  */
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth, useApp } from '../../context/AppContext';
-import api, { errorMessage } from '../../services/api';
+import api, { errorMessage, fieldErrors } from '../../services/api';
+import Modal from '../../components/Modal';
+import Field from '../../components/Field';
+import TableSkeleton from '../../components/TableSkeleton';
+import { SectionHeader, SectionBody, KV, EmptyState } from '../../components/PageSection';
+import { orderStatusPill } from './SalesOrders';
 
+const PRICING = ['FIXED', 'MARKET', 'COST_PLUS'];
 const fmtMoney = (n, c = '') => {
   if (n == null || n === '') return '—';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 const todayISO = () => new Date().toISOString().slice(0, 10);
-const PRICING = ['FIXED', 'MARKET', 'COST_PLUS'];
+const emptyLine = () => ({
+  product: '', quantity: '', pricing_method: 'FIXED',
+  unit_price: '', base_price: '', premium: '', target_margin_pct: '',
+});
 
 export default function SalesOrderDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { can } = useAuth();
-  const { notify, companyParams } = useApp();
   const isNew = id === 'new';
 
-  if (isNew) return <CreateSO onCreated={(so) => navigate(`/sales/orders/${so.id}`, { replace: true })} />;
-  return <EditSO id={id} can={can} notify={notify} companyParams={companyParams} navigate={navigate} />;
+  if (isNew) {
+    return (
+      <CreateSO
+        onCreated={(so) => navigate(`/sales/orders/${so.id}`, { replace: true })}
+        onCancel={() => navigate('/sales/orders')}
+      />
+    );
+  }
+  return <EditSO id={id} />;
 }
 
-function CreateSO({ onCreated }) {
+/* ---------------------------------------------------------------- create */
+
+function CreateSO({ onCreated, onCancel }) {
   const { companyParams, notify } = useApp();
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
-  const [depots, setDepots] = useState([]);
   const [form, setForm] = useState({
     customer: '', order_date: todayISO(), required_date: '',
     delivery_location: '', delivery_terms: '',
   });
-  const [lines, setLines] = useState([{ product: '', quantity: '', pricing_method: 'FIXED', unit_price: '', base_price: '', premium: '', target_margin_pct: '' }]);
+  const [lines, setLines] = useState([emptyLine()]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErr, setFieldErr] = useState({});
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setLine = (i, k, v) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, [k]: v } : l)));
 
@@ -51,12 +67,11 @@ function CreateSO({ onCreated }) {
     Promise.all([
       api.customers.listAll({ ...companyParams(), status: 'ACTIVE' }),
       api.products.listAll(),
-      api.depots.listAll({ ...companyParams() }),
-    ]).then(([c, p, d]) => { setCustomers(c); setProducts(p); setDepots(d); }).catch(() => {});
+    ]).then(([c, p]) => { setCustomers(c); setProducts(p); }).catch(() => {});
   }, [companyParams]);
 
   const submit = async (e) => {
-    e.preventDefault(); setBusy(true); setError('');
+    e.preventDefault(); setBusy(true); setError(''); setFieldErr({});
     try {
       const body = {
         ...form, company: companyParams().company,
@@ -69,110 +84,152 @@ function CreateSO({ onCreated }) {
           ...(l.target_margin_pct ? { target_margin_pct: l.target_margin_pct } : {}),
         })),
       };
-      ['required_date'].forEach((k) => { if (!body[k]) delete body[k]; });
+      if (!body.required_date) delete body.required_date;
       const so = await api.salesOrders.create(body);
       notify('Sales order created.', 'success');
       onCreated(so);
-    } catch (err) { setError(errorMessage(err)); }
+    } catch (err) { setError(errorMessage(err)); setFieldErr(fieldErrors(err)); }
     finally { setBusy(false); }
   };
 
   return (
-    <div className="app-content">
-      <header className="page-header"><div className="page-header__main">
-        <h1 className="page-header__title">New sales order</h1>
-      </div></header>
+    <div>
+      <div className="page-header">
+        <div className="page-header__lead">
+          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-cart-plus"></i></span>
+          <div className="page-header__text">
+            <h1 className="page-title">New sales order</h1>
+            <p className="page-subtitle">Pricing is applied per line when the order is saved</p>
+          </div>
+        </div>
+        <div className="page-header__actions">
+          <Link to="/sales/orders" className="btn btn-secondary">
+            <i className="bi bi-arrow-left"></i>
+            Sales orders
+          </Link>
+        </div>
+      </div>
+
+      {error && <div className="alert alert-danger" role="alert">{error}</div>}
+
       <form onSubmit={submit}>
-        <div className="card"><div className="card__body">
-          <div className="form-grid form-grid--3">
-            <div className="field">
-              <label className="label label--required">Customer</label>
-              <select className="select" value={form.customer} onChange={set('customer')} required>
-                <option value="">—</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}
-              </select>
+        <section className="page-card">
+          <SectionHeader first icon="bi-card-text" title="Order Details" />
+          <SectionBody>
+            <div className="form-grid">
+              <Field label="Customer" required err={fieldErr.customer}>
+                <select className="form-select" value={form.customer} onChange={set('customer')} required>
+                  <option value="">—</option>
+                  {customers.map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}
+                </select>
+              </Field>
+              <Field label="Order date" required>
+                <input type="date" className="form-control" value={form.order_date} onChange={set('order_date')} required />
+              </Field>
+              <Field label="Required date">
+                <input type="date" className="form-control" value={form.required_date} onChange={set('required_date')} />
+              </Field>
+              <Field label="Delivery location">
+                <input className="form-control" value={form.delivery_location} onChange={set('delivery_location')} />
+              </Field>
+              <Field label="Terms">
+                <input className="form-control" value={form.delivery_terms} onChange={set('delivery_terms')} />
+              </Field>
             </div>
-            <div className="field">
-              <label className="label label--required">Order date</label>
-              <input type="date" className="input" value={form.order_date} onChange={set('order_date')} required />
-            </div>
-            <div className="field">
-              <label className="label">Required date</label>
-              <input type="date" className="input" value={form.required_date} onChange={set('required_date')} />
-            </div>
-            <div className="field span-2"><label className="label">Delivery location</label>
-              <input className="input" value={form.delivery_location} onChange={set('delivery_location')} /></div>
-            <div className="field"><label className="label">Terms</label>
-              <input className="input" value={form.delivery_terms} onChange={set('delivery_terms')} /></div>
-          </div>
-        </div></div>
+          </SectionBody>
+        </section>
 
-        <div className="card mt-3"><div className="card__body">
-          <div className="line-items">
-            <table>
-              <thead><tr>
-                <th>Product</th><th className="num">Qty</th><th>Pricing</th>
-                <th className="num">Fixed / base price</th><th className="num">Premium</th>
-                <th className="num">Target margin %</th><th />
-              </tr></thead>
-              <tbody>
-                {lines.map((l, i) => (
-                  <tr key={i}>
-                    <td>
-                      <select className="select" value={l.product} onChange={(e) => setLine(i, 'product', e.target.value)}>
-                        <option value="">—</option>
-                        {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
-                      </select>
-                    </td>
-                    <td><input type="number" step="0.001" className="input num" value={l.quantity} onChange={(e) => setLine(i, 'quantity', e.target.value)} /></td>
-                    <td>
-                      <select className="select" value={l.pricing_method} onChange={(e) => setLine(i, 'pricing_method', e.target.value)}>
-                        {PRICING.map((p) => <option key={p} value={p}>{p.replace('_', ' ')}</option>)}
-                      </select>
-                    </td>
-                    <td>
-                      {l.pricing_method === 'FIXED'
-                        ? <input type="number" step="0.000001" className="input num" value={l.unit_price} onChange={(e) => setLine(i, 'unit_price', e.target.value)} />
-                        : <input type="number" step="0.000001" className="input num" value={l.base_price} onChange={(e) => setLine(i, 'base_price', e.target.value)} disabled={l.pricing_method === 'COST_PLUS'} />}
-                    </td>
-                    <td><input type="number" step="0.000001" className="input num" value={l.premium} onChange={(e) => setLine(i, 'premium', e.target.value)} disabled={l.pricing_method !== 'MARKET'} /></td>
-                    <td><input type="number" step="0.001" className="input num" value={l.target_margin_pct} onChange={(e) => setLine(i, 'target_margin_pct', e.target.value)} disabled={l.pricing_method !== 'COST_PLUS'} /></td>
-                    <td>
-                      {lines.length > 1 && (
-                        <button type="button" className="row-action row-action--danger"
-                                onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}>
-                          <i className="bi bi-x-lg" />
-                        </button>
-                      )}
-                    </td>
+        <section className="page-card">
+          <SectionHeader first icon="bi-droplet-half" title="Lines" subtitle={`${lines.length} line${lines.length !== 1 ? 's' : ''}`}>
+            <button type="button" className="btn btn-sm btn-secondary" onClick={() => setLines((ls) => [...ls, emptyLine()])}>
+              <i className="bi bi-plus-lg"></i> Add line
+            </button>
+          </SectionHeader>
+          <div className="table-wrap">
+            <div className="table-responsive">
+              <table className="table mb-0">
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th className="text-right">Qty</th>
+                    <th>Pricing</th>
+                    <th className="text-right">Fixed / base price</th>
+                    <th className="text-right">Premium</th>
+                    <th className="text-right">Target margin %</th>
+                    <th style={{ width: '3rem' }}></th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="line-items__foot">
-              <button type="button" className="btn btn-sm"
-                      onClick={() => setLines((ls) => [...ls, { product: '', quantity: '', pricing_method: 'FIXED', unit_price: '', base_price: '', premium: '', target_margin_pct: '' }])}>
-                + Add line
-              </button>
+                </thead>
+                <tbody>
+                  {lines.map((l, i) => (
+                    <tr key={i}>
+                      <td>
+                        <select className="form-select" value={l.product} onChange={(e) => setLine(i, 'product', e.target.value)}>
+                          <option value="">—</option>
+                          {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
+                        </select>
+                      </td>
+                      <td><input type="number" step="0.001" className="form-control num" value={l.quantity} onChange={(e) => setLine(i, 'quantity', e.target.value)} /></td>
+                      <td>
+                        <select className="form-select" value={l.pricing_method} onChange={(e) => setLine(i, 'pricing_method', e.target.value)}>
+                          {PRICING.map((p) => <option key={p} value={p}>{p.replace('_', ' ')}</option>)}
+                        </select>
+                      </td>
+                      <td>
+                        {l.pricing_method === 'FIXED' ? (
+                          <input type="number" step="0.000001" className="form-control num" value={l.unit_price}
+                                 onChange={(e) => setLine(i, 'unit_price', e.target.value)} />
+                        ) : (
+                          <input type="number" step="0.000001" className="form-control num" value={l.base_price}
+                                 onChange={(e) => setLine(i, 'base_price', e.target.value)} disabled={l.pricing_method === 'COST_PLUS'} />
+                        )}
+                      </td>
+                      <td>
+                        <input type="number" step="0.000001" className="form-control num" value={l.premium}
+                               onChange={(e) => setLine(i, 'premium', e.target.value)} disabled={l.pricing_method !== 'MARKET'} />
+                      </td>
+                      <td>
+                        <input type="number" step="0.001" className="form-control num" value={l.target_margin_pct}
+                               onChange={(e) => setLine(i, 'target_margin_pct', e.target.value)} disabled={l.pricing_method !== 'COST_PLUS'} />
+                      </td>
+                      <td>
+                        {lines.length > 1 && (
+                          <button type="button" className="btn btn-icon" title="Remove line" aria-label="Remove line"
+                                  onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}>
+                            <i className="bi bi-x-lg"></i>
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
-          <p className="field-hint mt-3">
-            The server applies <code>apply_line_pricing</code> and blocks margins below the product or company floor
-            unless you hold <code>sales.below_margin</code>.
-          </p>
-          {error && <p className="field-error mt-3" role="alert">{error}</p>}
-        </div></div>
+          <SectionBody>
+            <p className="text-muted-soft" style={{ fontSize: '0.8125rem', margin: 0 }}>
+              The server applies <code>apply_line_pricing</code> and blocks margins below the product or company floor
+              unless you hold <code>sales.below_margin</code>.
+            </p>
+          </SectionBody>
+        </section>
 
-        <div className="form-actions">
-          <button type="button" className="btn" onClick={() => onCreated(null)}>Cancel</button>
-          <button className="btn btn-primary" disabled={busy}>{busy ? 'Creating…' : 'Create order'}</button>
+        <div className="d-flex gap-2">
+          <button type="button" className="btn btn-secondary" onClick={onCancel}>Cancel</button>
+          <button className="btn btn-primary" disabled={busy}>
+            <i className="bi bi-save"></i>
+            {busy ? 'Creating...' : 'Create order'}
+          </button>
         </div>
       </form>
     </div>
   );
 }
 
-function EditSO({ id, can, notify, companyParams, navigate }) {
+/* ---------------------------------------------------------------- edit / view */
+
+function EditSO({ id }) {
+  const { can } = useAuth();
+  const { notify, companyParams } = useApp();
   const [so, setSo] = useState(null);
   const [depots, setDepots] = useState([]);
   const [reserving, setReserving] = useState(false);
@@ -193,15 +250,27 @@ function EditSO({ id, can, notify, companyParams, navigate }) {
 
   useEffect(() => { load(); }, [load]);
 
-  if (loading && !so) return <div className="app-content"><div className="state-screen">Loading…</div></div>;
-  if (error && !so) return <div className="app-content"><div className="card"><div className="card__body">
-    <p className="field-error">{error}</p><button className="btn mt-2" onClick={load}>Try again</button>
-  </div></div></div>;
+  if (loading && !so) {
+    return <div><section className="page-card"><TableSkeleton rows={6} columns={6} /></section></div>;
+  }
+  if (error && !so) {
+    return (
+      <div>
+        <div className="alert alert-danger" role="alert">
+          <span style={{ flex: 1 }}>{error}</span>
+          <button type="button" className="btn btn-sm btn-outline-danger" onClick={load}>Try again</button>
+        </div>
+      </div>
+    );
+  }
   if (!so) return null;
 
   const submit = async () => {
-    try { const res = await api.salesOrders.submit(so.id); notify(res.approval_request ? 'Sent for approval.' : 'Approved.', 'success'); load(); }
-    catch (err) { notify(errorMessage(err), 'error'); }
+    try {
+      const res = await api.salesOrders.submit(so.id);
+      notify(res.approval_request ? 'Sent for approval.' : 'Approved.', 'success');
+      load();
+    } catch (err) { notify(errorMessage(err), 'error'); }
   };
   const cancel = async () => {
     if (!window.confirm(`Cancel ${so.reference}?`)) return;
@@ -214,81 +283,111 @@ function EditSO({ id, can, notify, companyParams, navigate }) {
     finally { setReserving(false); }
   };
 
+  const lines = so.lines || [];
+
   return (
-    <div className="app-content">
-      <header className="page-header">
-        <div className="page-header__main">
-          <div className="breadcrumb">
-            <button className="breadcrumb__back" onClick={() => navigate(-1)}><i className="bi bi-arrow-left" /></button>
-            <span className="breadcrumb__item"><a href="/sales/orders">Sales orders</a></span>
-            <span className="breadcrumb__item is-current"><span>{so.reference}</span></span>
+    <div>
+      <div className="page-header">
+        <div className="page-header__lead">
+          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-cart-check"></i></span>
+          <div className="page-header__text">
+            <h1 className="page-title">
+              {so.reference}{' '}
+              <span className={`status-pill ${orderStatusPill(so.status)}`}>{so.status.replace('_', ' ')}</span>
+            </h1>
+            <p className="page-subtitle">
+              {so.customer_label || so.customer} · {fmtMoney(so.total, so.currency)}
+            </p>
           </div>
-          <h1 className="page-header__title">
-            {so.reference}
-            <span className={`status ${so.status === 'APPROVED' ? 'status-active' : so.status === 'COMPLETED' ? 'status-closed' : so.status === 'CANCELLED' ? 'status-rejected' : ['AWAITING_APPROVAL', 'IN_FULFILMENT'].includes(so.status) ? 'status-pending' : 'status-draft'}`}>{so.status.replace('_', ' ')}</span>
-          </h1>
-          <p className="page-header__subtitle">
-            {so.customer_label || so.customer} · {fmtMoney(so.total, so.currency)}
-          </p>
         </div>
         <div className="page-header__actions">
+          <Link to="/sales/orders" className="btn btn-secondary">
+            <i className="bi bi-arrow-left"></i>
+            Sales orders
+          </Link>
           {so.status === 'DRAFT' && can('sales.edit') && (
-            <button className="btn btn-primary" onClick={submit}>Submit</button>
+            <button className="btn btn-primary" onClick={submit}>
+              <i className="bi bi-send"></i>
+              Submit
+            </button>
           )}
           {['APPROVED', 'IN_FULFILMENT'].includes(so.status) && can('sales.edit') && (
-            <button className="btn" onClick={() => setReserving(true)}>Reserve stock</button>
+            <button className="btn btn-primary" onClick={() => setReserving(true)}>
+              <i className="bi bi-box-seam"></i>
+              Reserve stock
+            </button>
           )}
           {['DRAFT', 'AWAITING_APPROVAL', 'APPROVED'].includes(so.status) && can('sales.edit') && (
-            <button className="btn btn-danger-outline" onClick={cancel}>Cancel</button>
+            <button className="btn btn-outline-danger" onClick={cancel}>
+              <i className="bi bi-x-circle"></i>
+              Cancel
+            </button>
           )}
         </div>
-      </header>
+      </div>
 
-      <div className="card"><div className="card__header"><h2 className="card__title">Header</h2></div><div className="card__body">
-        <div className="kv">
-          <div className="kv__item"><div className="kv__label">Customer</div><div className="kv__value">{so.customer_label || so.customer}</div></div>
-          <div className="kv__item"><div className="kv__label">Order date</div><div className="kv__value">{so.order_date}</div></div>
-          <div className="kv__item"><div className="kv__label">Required date</div><div className="kv__value">{so.required_date || '—'}</div></div>
-          <div className="kv__item"><div className="kv__label">Delivery location</div><div className="kv__value">{so.delivery_location || '—'}</div></div>
-          <div className="kv__item"><div className="kv__label">Delivery terms</div><div className="kv__value">{so.delivery_terms || '—'}</div></div>
-          <div className="kv__item"><div className="kv__label">Currency</div><div className="kv__value">{so.currency || 'functional'}</div></div>
-        </div>
-      </div></div>
+      <section className="page-card">
+        <SectionHeader first icon="bi-info-circle" title="Order Details" />
+        <SectionBody>
+          <KV items={[
+            ['Customer', so.customer_label || so.customer],
+            ['Order date', so.order_date],
+            ['Required date', so.required_date || '—'],
+            ['Delivery location', so.delivery_location || '—'],
+            ['Delivery terms', so.delivery_terms || '—'],
+            ['Currency', so.currency || 'functional'],
+          ]} />
+        </SectionBody>
+      </section>
 
-      <div className="card mt-3"><div className="card__header"><h2 className="card__title">Lines</h2></div><div className="card__body card__body--flush">
-        <table className="table table--compact">
-          <thead><tr>
-            <th>Product</th><th className="num">Qty</th><th>Pricing</th>
-            <th className="num">Unit price</th><th className="num">Cost / L</th>
-            <th className="num">Margin %</th><th className="num">Delivered</th><th className="num">Invoiced</th>
-            <th className="num">Line total</th>
-          </tr></thead>
-          <tbody>
-            {so.lines.map((l) => (
-              <tr key={l.id}>
-                <td>{l.product_label || l.product}</td>
-                <td className="num">{Number(l.quantity).toLocaleString()}</td>
-                <td><span className="badge">{l.pricing_method}</span></td>
-                <td className="num">{Number(l.unit_price).toFixed(6)}</td>
-                <td className="num">{Number(l.cost_per_litre || 0).toFixed(6)}</td>
-                <td className="num">{Number(l.margin_pct || 0).toFixed(3)}</td>
-                <td className="num">{Number(l.delivered_quantity || 0).toLocaleString()}</td>
-                <td className="num">{Number(l.invoiced_quantity || 0).toLocaleString()}</td>
-                <td className="num">{fmtMoney(l.line_total)}</td>
-              </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr><td colSpan={8}>Subtotal</td><td className="num">{fmtMoney(so.subtotal)}</td></tr>
-            <tr><td colSpan={8}>Tax</td><td className="num">{fmtMoney(so.tax_total)}</td></tr>
-            <tr><td colSpan={8}><strong>Total</strong></td><td className="num"><strong>{fmtMoney(so.total)}</strong></td></tr>
-          </tfoot>
-        </table>
-      </div></div>
+      <section className="page-card">
+        <SectionHeader first icon="bi-list-ul" title="Lines" subtitle={`${lines.length} line${lines.length !== 1 ? 's' : ''}`} />
+        {!lines.length ? (
+          <EmptyState icon="bi-droplet" title="No lines" />
+        ) : (
+          <div className="table-wrap">
+            <div className="table-responsive">
+              <table className="table table-hover mb-0">
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th className="text-right">Qty</th>
+                    <th>Pricing</th>
+                    <th className="text-right">Unit price</th>
+                    <th className="text-right">Cost / L</th>
+                    <th className="text-right">Margin %</th>
+                    <th className="text-right">Delivered</th>
+                    <th className="text-right">Invoiced</th>
+                    <th className="text-right">Line total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((l) => (
+                    <tr key={l.id}>
+                      <td className="cell-name">{l.product_label || l.product}</td>
+                      <td className="cell-num">{Number(l.quantity).toLocaleString()}</td>
+                      <td><span className="badge badge-neutral">{String(l.pricing_method).replace('_', ' ')}</span></td>
+                      <td className="cell-num">{Number(l.unit_price).toFixed(6)}</td>
+                      <td className="cell-num">{Number(l.cost_per_litre || 0).toFixed(6)}</td>
+                      <td className="cell-num">{Number(l.margin_pct || 0).toFixed(3)}</td>
+                      <td className="cell-num">{Number(l.delivered_quantity || 0).toLocaleString()}</td>
+                      <td className="cell-num">{Number(l.invoiced_quantity || 0).toLocaleString()}</td>
+                      <td className="cell-num">{fmtMoney(l.line_total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr><td colSpan={8}>Subtotal</td><td className="cell-num">{fmtMoney(so.subtotal)}</td></tr>
+                  <tr><td colSpan={8}>Tax</td><td className="cell-num">{fmtMoney(so.tax_total)}</td></tr>
+                  <tr><td colSpan={8}><strong>Total</strong></td><td className="cell-num"><strong>{fmtMoney(so.total)}</strong></td></tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        )}
+      </section>
 
-      {reserving && (
-        <ReserveModal depots={depots} onClose={() => setReserving(false)} onDone={reserve} />
-      )}
+      {reserving && <ReserveModal depots={depots} onClose={() => setReserving(false)} onDone={reserve} />}
     </div>
   );
 }
@@ -296,30 +395,40 @@ function EditSO({ id, can, notify, companyParams, navigate }) {
 function ReserveModal({ depots, onClose, onDone }) {
   const [depot, setDepot] = useState('');
   const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    await onDone(depot); // parent closes the modal when finished
+  };
+
   return (
-    <div className="modal" role="dialog" aria-modal="true">
-      <div className="modal__dialog">
-        <div className="modal__header">
-          <h2 className="modal__title">Reserve stock</h2>
-          <button className="modal__close" onClick={onClose} aria-label="Close"><i className="bi bi-x-lg" /></button>
-        </div>
-        <div className="modal__body">
-          <div className="field">
-            <label className="label label--required">Depot</label>
-            <select className="select" value={depot} onChange={(e) => setDepot(e.target.value)}>
+    <Modal
+      show
+      onClose={onClose}
+      title="Reserve stock"
+      subtitle="Creates StockReservation rows for every order line"
+      icon="bi-box-seam"
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" type="submit" form="reserveForm" disabled={busy || !depot}>
+            <i className="bi bi-check-lg"></i>
+            {busy ? 'Reserving...' : 'Reserve'}
+          </button>
+        </>
+      }
+    >
+      <form id="reserveForm" onSubmit={submit}>
+        <div className="form-grid">
+          <Field label="Depot" required span>
+            <select className="form-select" value={depot} onChange={(e) => setDepot(e.target.value)} required>
               <option value="">—</option>
               {depots.map((d) => <option key={d.id} value={d.id}>{d.code} · {d.name}</option>)}
             </select>
-          </div>
-          <p className="field-hint mt-2">Creates StockReservation rows for every order line.</p>
+          </Field>
         </div>
-        <div className="modal__footer">
-          <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={busy || !depot} onClick={async () => { setBusy(true); await onDone(depot); }}>
-            {busy ? 'Reserving…' : 'Reserve'}
-          </button>
-        </div>
-      </div>
-    </div>
+      </form>
+    </Modal>
   );
 }

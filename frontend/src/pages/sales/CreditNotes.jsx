@@ -5,8 +5,11 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth, useApp } from '../../context/AppContext';
-import api, { errorMessage } from '../../services/api';
-import { Field } from './Customers';
+import api, { errorMessage, fieldErrors } from '../../services/api';
+import Modal from '../../components/Modal';
+import Field from '../../components/Field';
+import Pagination, { usePagination } from '../../components/Pagination';
+import TableSkeleton from '../../components/TableSkeleton';
 
 const STATUS = ['DRAFT', 'POSTED'];
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -22,16 +25,23 @@ export default function CreditNotes() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('');
   const [editing, setEditing] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const res = await api.salesCreditNotes.list({ ...companyParams(), ordering: '-id', page_size: 500 });
+      const res = await api.salesCreditNotes.list({
+        ...companyParams(), ordering: '-id',
+        ...(search ? { search } : {}),
+        ...(status ? { status } : {}),
+        page_size: 500,
+      });
       setRows(res?.results || res || []);
     } catch (err) { setError(errorMessage(err)); }
     finally { setLoading(false); }
-  }, [companyParams]);
+  }, [companyParams, search, status]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -41,64 +51,158 @@ export default function CreditNotes() {
     catch (err) { notify(errorMessage(err), 'error'); }
   };
 
+  const hasActiveFilters = !!(search || status);
+  const clearFilters = () => { setSearch(''); setStatus(''); };
+  const { pageRows, paginationProps } = usePagination(rows);
+
   return (
-    <div className="app-content">
-      <header className="page-header">
-        <div className="page-header__main">
-          <h1 className="page-header__title">Credit notes</h1>
-          <p className="page-header__subtitle">
-            {activeCompanyObj ? activeCompanyObj.name : 'All entities'}
-          </p>
+    <div>
+      <div className="page-header">
+        <div className="page-header__lead">
+          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-receipt"></i></span>
+          <div className="page-header__text">
+            <h1 className="page-title">Credit notes</h1>
+            <p className="page-subtitle">{activeCompanyObj ? activeCompanyObj.name : 'All entities'}</p>
+          </div>
         </div>
         <div className="page-header__actions">
           {can('sales.edit') && (
             <button className="btn btn-primary" onClick={() => setEditing({})}>
-              <i className="bi bi-plus-lg" /> New credit note
+              <i className="bi bi-plus-lg"></i>
+              New credit note
             </button>
           )}
         </div>
-      </header>
-
-      <div className={`table-card ${loading ? 'is-loading' : ''}`}>
-        {error ? (
-          <div className="card__body"><p className="field-error" role="alert">{error}</p>
-            <button className="btn mt-2" onClick={load}>Try again</button></div>
-        ) : !rows.length && !loading ? (
-          <div className="table-empty"><div className="table-empty__title">No credit notes</div></div>
-        ) : (
-          <div className="table-wrap">
-            <table className="table">
-              <thead><tr>
-                <th>Reference</th><th>Date</th><th>Invoice</th><th>Product</th>
-                <th className="num">Qty</th><th className="num">Total</th><th>Reason</th><th>Status</th><th className="col-actions" />
-              </tr></thead>
-              <tbody>
-                {rows.map((cn) => (
-                  <tr key={cn.id}>
-                    <td className="mono">{cn.reference}</td>
-                    <td>{cn.note_date}</td>
-                    <td className="mono">{cn.invoice_label || cn.invoice}</td>
-                    <td>{cn.product_label || '—'}</td>
-                    <td className="num">{Number(cn.quantity || 0).toLocaleString()}</td>
-                    <td className="num">{fmtMoney(cn.total, cn.currency)}</td>
-                    <td className="text-truncate" style={{ maxWidth: 240 }}>{cn.reason || '—'}</td>
-                    <td><span className={`status ${cn.status === 'POSTED' ? 'status-posted' : 'status-draft'}`}>{cn.status}</span></td>
-                    <td className="col-actions">
-                      {cn.status === 'DRAFT' && can('sales.edit') && (
-                        <button className="btn btn-xs btn-primary" onClick={() => post(cn)}>Post</button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
       </div>
 
+      {error && (
+        <div className="alert alert-danger" role="alert">
+          <span style={{ flex: 1 }}>{error}</span>
+          <button type="button" className="btn btn-sm btn-outline-danger" onClick={load}>Try again</button>
+        </div>
+      )}
+
+      <section className="page-card">
+        <div className="search-bar">
+          <div className="search-bar__field">
+            <i className="bi bi-search" aria-hidden="true"></i>
+            <input
+              type="text"
+              className="form-control"
+              placeholder="Search by reference or invoice..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="Search credit notes"
+            />
+            {search && (
+              <button type="button" className="search-bar__clear" onClick={() => setSearch('')} aria-label="Clear search">
+                <i className="bi bi-x-lg"></i>
+              </button>
+            )}
+          </div>
+          <select className="form-select" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
+            <option value="">All statuses</option>
+            {STATUS.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          {hasActiveFilters && (
+            <button className="btn btn-secondary" onClick={clearFilters}>
+              <i className="bi bi-x-lg"></i> Clear
+            </button>
+          )}
+        </div>
+
+        {hasActiveFilters && (
+          <div className="chip-row">
+            {search && (
+              <span className="filter-chip">
+                Search: "{search}"
+                <button onClick={() => setSearch('')}><i className="bi bi-x"></i></button>
+              </span>
+            )}
+            {status && (
+              <span className="filter-chip">
+                Status: {status}
+                <button onClick={() => setStatus('')}><i className="bi bi-x"></i></button>
+              </span>
+            )}
+          </div>
+        )}
+
+        <div className="table-wrap__header" style={{ borderTop: '1px solid var(--border-color)' }}>
+          <span className="panel-title">
+            <i className="bi bi-list-ul text-brand"></i>
+            Credit Note List
+          </span>
+          <span className="chart-card__subtitle">
+            {rows.length} credit note{rows.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+
+        {loading ? (
+          <TableSkeleton rows={8} columns={9} />
+        ) : rows.length === 0 ? (
+          <div className="empty-state">
+            <i className="bi bi-receipt"></i>
+            <h6>{hasActiveFilters ? 'No credit notes match your search' : 'No credit notes yet'}</h6>
+            <p className="text-muted-soft">
+              {hasActiveFilters ? 'Try adjusting your search or filters' : "Click 'New credit note' to add the first one"}
+            </p>
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <div className="table-responsive">
+              <table className="table table-hover mb-0">
+                <thead>
+                  <tr>
+                    <th>Reference</th>
+                    <th>Date</th>
+                    <th>Invoice</th>
+                    <th>Product</th>
+                    <th className="text-right">Qty</th>
+                    <th className="text-right">Total</th>
+                    <th>Reason</th>
+                    <th>Status</th>
+                    <th className="text-center" style={{ width: '6rem' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageRows.map((cn) => (
+                    <tr key={cn.id}>
+                      <td className="cell-mono text-brand fw-600">{cn.reference}</td>
+                      <td>{cn.note_date}</td>
+                      <td className="cell-mono">{cn.invoice_label || cn.invoice}</td>
+                      <td>{cn.product_label || '—'}</td>
+                      <td className="cell-num">{Number(cn.quantity || 0).toLocaleString()}</td>
+                      <td className="cell-num">{fmtMoney(cn.total, cn.currency)}</td>
+                      <td className="text-truncate" style={{ maxWidth: 240 }}>{cn.reason || '—'}</td>
+                      <td>
+                        <span className={`status-pill ${cn.status === 'POSTED' ? 'status-pill--info' : 'status-pill--neutral'}`}>{cn.status}</span>
+                      </td>
+                      <td>
+                        {cn.status === 'DRAFT' && can('sales.edit') && (
+                          <div className="row-actions">
+                            <button className="btn btn-sm btn-primary" onClick={() => post(cn)}>Post</button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {!loading && rows.length > 0 && <Pagination {...paginationProps} />}
+      </section>
+
       {editing && (
-        <CreditNoteModal row={editing} companyParams={companyParams}
-                         onClose={() => setEditing(null)} onSaved={() => { setEditing(null); notify('Saved.', 'success'); load(); }} />
+        <CreditNoteModal
+          row={editing}
+          companyParams={companyParams}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); notify('Saved.', 'success'); load(); }}
+        />
       )}
     </div>
   );
@@ -119,6 +223,7 @@ function CreditNoteModal({ row, companyParams, onClose, onSaved }) {
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErr, setFieldErr] = useState({});
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   useEffect(() => {
@@ -131,75 +236,91 @@ function CreditNoteModal({ row, companyParams, onClose, onSaved }) {
   }, [companyParams]);
 
   const submit = async (e) => {
-    e.preventDefault(); setBusy(true); setError('');
+    e.preventDefault(); setBusy(true); setError(''); setFieldErr({});
     try {
       const body = { ...form, company: companyParams().company };
       ['product', 'restock_tank', 'currency'].forEach((k) => { if (!body[k]) delete body[k]; });
       isNew ? await api.salesCreditNotes.create(body) : await api.salesCreditNotes.update(row.id, body);
       onSaved();
-    } catch (err) { setError(errorMessage(err)); }
+    } catch (err) { setError(errorMessage(err)); setFieldErr(fieldErrors(err)); }
     finally { setBusy(false); }
   };
 
   return (
-    <div className="modal" role="dialog" aria-modal="true">
-      <div className="modal__dialog modal__dialog--lg">
-        <div className="modal__header">
-          <h2 className="modal__title">{isNew ? 'New credit note' : `Edit ${row.reference}`}</h2>
-          <button className="modal__close" onClick={onClose} aria-label="Close"><i className="bi bi-x-lg" /></button>
+    <Modal
+      show
+      onClose={onClose}
+      title={isNew ? 'New credit note' : `Edit ${row.reference}`}
+      subtitle="Sales credit notes"
+      icon="bi-receipt"
+      size="lg"
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" type="submit" form="creditNoteForm" disabled={busy}>
+            <i className="bi bi-save"></i>
+            {busy ? 'Saving...' : 'Save'}
+          </button>
+        </>
+      }
+    >
+      <form id="creditNoteForm" onSubmit={submit}>
+        <h6 className="modal-section-title"><i className="bi bi-card-text" aria-hidden="true"></i>Credit Note Details</h6>
+        <div className="form-grid">
+          <Field label="Invoice" required err={fieldErr.invoice}>
+            <select className="form-select" value={form.invoice} onChange={set('invoice')} required>
+              <option value="">—</option>
+              {invoices.map((i) => (
+                <option key={i.id} value={i.id}>
+                  {i.reference} · {i.customer_label || i.customer} · {fmtMoney(i.total, i.currency)}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Product">
+            <select className="form-select" value={form.product} onChange={set('product')}>
+              <option value="">—</option>
+              {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Note date" required>
+            <input type="date" className="form-control" value={form.note_date} onChange={set('note_date')} required />
+          </Field>
+          <Field label="Currency">
+            <select className="form-select" value={form.currency} onChange={set('currency')}>
+              <option value="">Functional</option>
+              {currencies.map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
+            </select>
+          </Field>
+          <Field label="Reason" span>
+            <textarea className="form-control" rows={2} value={form.reason} onChange={set('reason')} />
+          </Field>
         </div>
-        <form onSubmit={submit}>
-          <div className="modal__body">
-            <div className="form-grid">
-              <Field label="Invoice" required>
-                <select className="select" value={form.invoice} onChange={set('invoice')} required>
-                  <option value="">—</option>
-                  {invoices.map((i) => <option key={i.id} value={i.id}>{i.reference} · {i.customer_label || i.customer} · {fmtMoney(i.total, i.currency)}</option>)}
-                </select>
-              </Field>
-              <Field label="Product">
-                <select className="select" value={form.product} onChange={set('product')}>
-                  <option value="">—</option>
-                  {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
-                </select>
-              </Field>
-              <Field label="Note date" required>
-                <input type="date" className="input" value={form.note_date} onChange={set('note_date')} required />
-              </Field>
-              <Field label="Currency">
-                <select className="select" value={form.currency} onChange={set('currency')}>
-                  <option value="">Functional</option>
-                  {currencies.map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
-                </select>
-              </Field>
-              <Field label="Quantity" required>
-                <input type="number" step="0.001" className="input num" value={form.quantity} onChange={set('quantity')} required />
-              </Field>
-              <Field label="Unit price" required>
-                <input type="number" step="0.000001" className="input num" value={form.unit_price} onChange={set('unit_price')} required />
-              </Field>
-              <Field label="Tax rate %">
-                <input type="number" step="0.001" className="input num" value={form.tax_rate} onChange={set('tax_rate')} />
-              </Field>
-              <Field label="Restock tank">
-                <select className="select" value={form.restock_tank} onChange={set('restock_tank')}>
-                  <option value="">— do not restock —</option>
-                  {tanks.map((t) => <option key={t.id} value={t.id}>{t.code} · {t.name}</option>)}
-                </select>
-              </Field>
-              <Field label="Reason" span><textarea className="textarea" rows={2} value={form.reason} onChange={set('reason')} /></Field>
-            </div>
-            <p className="field-hint mt-3">
-              Credit note cannot exceed the invoice balance. Restocking creates a stock return at delivered cost.
-            </p>
-            {error && <p className="field-error mt-3" role="alert">{error}</p>}
-          </div>
-          <div className="modal__footer">
-            <button type="button" className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
-          </div>
-        </form>
-      </div>
-    </div>
+
+        <h6 className="modal-section-title"><i className="bi bi-calculator" aria-hidden="true"></i>Amounts & Restocking</h6>
+        <div className="form-grid">
+          <Field label="Quantity" required err={fieldErr.quantity}>
+            <input type="number" step="0.001" className="form-control num" value={form.quantity} onChange={set('quantity')} required />
+          </Field>
+          <Field label="Unit price" required err={fieldErr.unit_price}>
+            <input type="number" step="0.000001" className="form-control num" value={form.unit_price} onChange={set('unit_price')} required />
+          </Field>
+          <Field label="Tax rate %">
+            <input type="number" step="0.001" className="form-control num" value={form.tax_rate} onChange={set('tax_rate')} />
+          </Field>
+          <Field label="Restock tank">
+            <select className="form-select" value={form.restock_tank} onChange={set('restock_tank')}>
+              <option value="">— do not restock —</option>
+              {tanks.map((t) => <option key={t.id} value={t.id}>{t.code} · {t.name}</option>)}
+            </select>
+          </Field>
+        </div>
+        <p className="text-muted-soft mt-3" style={{ fontSize: '0.8125rem' }}>
+          Credit note cannot exceed the invoice balance. Restocking creates a stock return at delivered cost.
+        </p>
+
+        {error && <div className="alert alert-danger mt-3" role="alert">{error}</div>}
+      </form>
+    </Modal>
   );
 }
