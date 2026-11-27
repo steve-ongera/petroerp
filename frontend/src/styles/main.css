@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
 /* ==========================================================================
    MAIN.CSS — PetroERP Design System (Masomo Portal / School ERP look, v7)
    Self-contained: NO Bootstrap required (do not import it, its .modal and
@@ -26,6 +28,7 @@
    20. Misc ERP components (steps, timeline, kv, line-items, gauge ...)
    21. Utilities
    22. Responsive, touch
+   23. Login page
    ========================================================================== */
 
 /* ==========================================================================
@@ -1576,26 +1579,6 @@ legend { padding: 0; margin-bottom: 0.5rem; font-size: var(--fs-sm); font-weight
 .auth__point { display: flex; align-items: flex-start; gap: 0.75rem; padding: 0.75rem 0.9rem; font-size: var(--fs-sm); color: #fff; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: var(--radius-lg); }
 .auth__point .bi { font-size: 1rem; color: var(--gold-500); }
 
-.login-screen {
-  display: grid; place-items: center; min-height: 100vh; min-height: 100dvh; padding: 1.5rem;
-  background: #fff;
-}
-.login-card { width: 100%; max-width: 23rem; padding: 0; background: transparent; border: 0; box-shadow: none; }
-.login-logo { display: block; width: min(100%, 17rem); height: auto; margin: 0 auto 0.25rem; }
-.login-card h1 { margin-bottom: 0.1rem; font-size: var(--fs-lg); text-align: center; color: #011c52; }
-.login-card__sub { margin: 0 0 0.85rem; text-align: center; color: var(--ink-500); font-size: var(--fs-sm); }
-.login-form { display: flex; flex-direction: column; gap: 0.7rem; }
-.login-form .form-control { min-height: 2.75rem; }
-.login-form .form-label { margin-bottom: 0; }
-.login-card .btn-login {
-  min-height: 2.75rem; font-size: var(--fs-base);
-  background: #011c52; border-color: #011c52; color: #fff;
-}
-.login-card .btn-login:hover { background: #0a2a6b; border-color: #0a2a6b; color: #fff; }
-.login-card .btn-login:focus-visible { box-shadow: 0 0 0 3px rgba(1, 28, 82, 0.2); }
-.login-note { margin: 0; text-align: center; font-size: var(--fs-sm); color: var(--ink-500); }
-.login-foot { margin-top: 1.1rem; text-align: center; font-size: var(--fs-xs); color: var(--ink-400); }
-
 .twofa { display: grid; grid-template-columns: 10rem minmax(0, 1fr); gap: 1.25rem; align-items: start; }
 .twofa__qr { width: 10rem; height: 10rem; padding: 0.5rem; background: #fff; border: 1px solid var(--border-color); border-radius: var(--radius-md); }
 .twofa__codes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.4rem 1rem; padding: 0.75rem; font-family: var(--font-mono); font-size: var(--fs-sm); background: var(--surface-2); border: 1px solid var(--border-color); border-radius: var(--radius-md); }
@@ -2640,4 +2623,229 @@ a.app-navbar__icon-btn, a.app-navbar__profile-menu-item { text-decoration: none;
   .dx .dx-card__body--flush { margin: 0 -1rem -1rem; }
   .dx .dx-summary thead th, .dx .dx-summary td { padding-left: 1rem; padding-right: 1rem; }
   .dx .dx-controls { width: 100%; }
+}
+
+/* ==========================================================================
+   23. LOGIN PAGE (.login-screen)
+   Measured from the 1672 x 941 design. --u equals 1px at that size and
+   scales with the viewport height, so the proportions stay the same.
+   Uses its own .login-* classes so global .field / .btn rules do not apply.
+   ========================================================================== */
+.login-screen {
+  --u: clamp(0.68px, calc(100vh / 941), 1.15px);
+  --login-navy: #02205c;
+  --login-navy-hover: #0a2f7a;
+  --login-muted: #5d6e95;
+  --login-border: #d2daee;
+  --login-danger: #e11d1d;
+  position: relative;
+  display: flex;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 24px 16px;
+  overflow: hidden;
+  background: #fdfdff;
+  font-feature-settings: normal;
+  letter-spacing: -0.006em;
+}
+.login-screen::before,
+.login-screen::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  background: no-repeat center / 100% 100%;
+}
+.login-screen::before {
+  top: 0;
+  left: 0;
+  width: 23.92vw;
+  height: 29.44vh;
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20viewBox%3D%270%200%20400%20277%27%20preserveAspectRatio%3D%27none%27%3E%3Cpath%20fill%3D%27%23f3f7fe%27%20d%3D%27M0%200H400C310%20125%20170%20228%200%20277Z%27/%3E%3Cpath%20fill%3D%27%23e6effd%27%20d%3D%27M0%200H271C215%20112%20118%20202%200%20248Z%27/%3E%3C/svg%3E");
+}
+.login-screen::after {
+  right: 0;
+  bottom: 0;
+  width: 28.53vw;
+  height: 31.67vh;
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20viewBox%3D%270%200%20477%20298%27%20preserveAspectRatio%3D%27none%27%3E%3Cpath%20fill%3D%27%23f3f7fe%27%20d%3D%27M0%20298C128%20155%20290%2042%20477%200V298Z%27/%3E%3Cpath%20fill%3D%27%23e6effd%27%20d%3D%27M190%20298C258%20185%20357%2095%20477%2044V298Z%27/%3E%3C/svg%3E");
+}
+
+/* margin: auto centres the block and still allows scrolling on short screens */
+.login-wrap {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: calc(742 * var(--u));
+  margin: auto;
+  transform: translateY(calc(22 * var(--u)));
+}
+
+.login-card {
+  width: 100%;
+  padding: calc(32 * var(--u)) calc(44 * var(--u)) calc(41 * var(--u));
+  background: #fff;
+  border: 1px solid #d5e0f7;
+  border-radius: calc(20 * var(--u));
+  box-shadow: 0 calc(10 * var(--u)) calc(40 * var(--u)) rgba(55, 100, 210, 0.13);
+}
+
+.login-logo {
+  display: block;
+  width: calc(580 * var(--u));
+  max-width: 100%;
+  height: calc(224 * var(--u));
+  object-fit: contain;
+  margin-bottom: 1 px;
+}
+
+.login-card h1 {
+  margin: calc(26 * var(--u)) 0 0;
+  text-align: center;
+  font-size: calc(35 * var(--u));
+  font-weight: 700;
+  line-height: calc(44 * var(--u));
+  letter-spacing: -0.012em;
+  color: var(--login-navy);
+}
+.login-card__sub {
+  margin: calc(6 * var(--u)) 0 0;
+  text-align: center;
+  font-size: calc(22.2 * var(--u));
+  line-height: calc(30 * var(--u));
+  color: var(--login-muted);
+}
+
+.login-form { margin-top: calc(23 * var(--u)); }
+.login-field + .login-field { margin-top: calc(21 * var(--u)); }
+
+.login-label {
+  display: flex;
+  align-items: center;
+  gap: calc(13 * var(--u));
+  height: calc(34 * var(--u));
+  margin-bottom: calc(4 * var(--u));
+  padding-left: calc(4 * var(--u));
+  font-size: calc(20 * var(--u));
+  font-weight: 700;
+  color: var(--login-navy);
+}
+.login-label svg {
+  flex: none;
+  width: calc(33 * var(--u));
+  height: calc(33 * var(--u));
+}
+.login-req { color: var(--login-danger); }
+
+.login-input-wrap { position: relative; }
+.login-input {
+  display: block;
+  width: 100%;
+  height: calc(60 * var(--u));
+  padding: 0 calc(20 * var(--u)) 0 calc(52 * var(--u));
+  font-family: inherit;
+  font-size: calc(20.3 * var(--u));
+  color: var(--login-navy);
+  background: #fff;
+  border: 1px solid var(--login-border);
+  border-radius: calc(9 * var(--u));
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.login-input::placeholder { color: var(--login-muted); opacity: 1; }
+.login-input:hover:not(:focus) { border-color: #b4c1e2; }
+.login-input:focus,
+.login-input:focus-visible {
+  outline: none;
+  border-color: var(--login-navy);
+  box-shadow: 0 0 0 3px rgba(2, 32, 92, 0.12);
+}
+.login-input:-webkit-autofill {
+  -webkit-text-fill-color: var(--login-navy);
+  box-shadow: 0 0 0 100px #fff inset;
+}
+.login-input-wrap--password .login-input { padding-right: calc(68 * var(--u)); }
+/* hide the extra reveal button Edge adds */
+.login-input::-ms-reveal { display: none; }
+
+.login-eye {
+  position: absolute;
+  top: 50%;
+  right: calc(10 * var(--u));
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: calc(42 * var(--u));
+  height: calc(42 * var(--u));
+  color: #6b7a9d;
+  border-radius: calc(8 * var(--u));
+}
+.login-eye svg { width: calc(32 * var(--u)); height: calc(32 * var(--u)); }
+.login-eye:hover { color: var(--login-navy); background: #eef2fc; }
+
+.login-field.has-error .login-input { border-color: var(--danger-600); }
+.login-field .form-text-error { margin-top: calc(5 * var(--u)); }
+.login-form .alert { margin: calc(16 * var(--u)) 0 0; }
+
+.login-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(15 * var(--u));
+  width: 100%;
+  height: calc(61 * var(--u));
+  margin-top: calc(17 * var(--u));
+  font-size: calc(23 * var(--u));
+  font-weight: 700;
+  color: #fff;
+  background: var(--login-navy);
+  border-radius: calc(9 * var(--u));
+  transition: background 0.15s ease;
+}
+.login-btn svg { width: calc(33 * var(--u)); height: calc(33 * var(--u)); }
+.login-btn:hover:not(:disabled) { background: var(--login-navy-hover); }
+.login-btn:disabled { opacity: 0.75; }
+.login-spinner { border-color: rgba(255, 255, 255, 0.35); border-top-color: #fff; }
+
+.login-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(30 * var(--u));
+  margin: calc(27 * var(--u)) 0 0;
+  font-size: calc(18.8 * var(--u));
+  line-height: calc(30 * var(--u));
+  text-align: center;
+  color: var(--login-muted);
+}
+.login-note::before,
+.login-note::after {
+  content: '';
+  flex: 1 1 0;
+  height: 1px;
+  background: #d8dfef;
+}
+
+.login-foot {
+  margin: calc(48 * var(--u)) 0 0;
+  text-align: center;
+  font-size: calc(17 * var(--u));
+  line-height: calc(28 * var(--u));
+  color: var(--login-muted);
+}
+
+/* phones: fixed comfortable sizes instead of height-based scaling */
+@media (max-width: 767px) {
+  .login-screen { --u: 0.76px; padding: 20px 14px; }
+  .login-screen::before { width: 55vw; height: 18vh; }
+  .login-screen::after { width: 65vw; height: 18vh; }
+  .login-wrap { max-width: 27rem; transform: none; }
+  .login-card { padding: 24px 18px 26px; }
+  .login-logo { width: 100%; max-width: 300px; height: auto; }
+  /* 16px stops iOS zooming in when an input is focused */
+  .login-input { height: 48px; padding-left: 16px; font-size: 16px; }
+  .login-btn { height: 48px; font-size: 16px; }
+  .login-label { font-size: 15px; }
+  .login-note { justify-content: center; font-size: 13px; line-height: 1.5; }
+  .login-note::before, .login-note::after { display: none; }
+  .login-card__sub { font-size: 15px; }
+  .login-foot { font-size: 12px; }
 }

@@ -384,19 +384,25 @@ const shipments = {
   recordLoading: (id, b) => post(`/shipments/${id}/record-loading/`, b),
   /** body: { distance_km?, fuel_issued_litres?, fuel_used_litres?, expected_delivery? } */
   tripData: (id, b) => post(`/shipments/${id}/trip-data/`, b),
-  /** body: { delivered_quantity, delivery_date?, is_final?, received_by?, notes?, pod_file?: File }. A shortage needs approval. */
+  /**
+   * body: { delivered_quantity, delivery_date?, is_final?, received_by?, receiver_contact?, delivery_note_no?, notes?,
+   *         pod_file?: File (signed delivery note), receiver_signature?: File }. A shortage needs approval.
+   */
   recordDelivery: (id, b) => post(`/shipments/${id}/record-delivery/`, toFormData(b)),
   /** Compute a new cost-sheet version. { finalize?: true, reopen?: true, notes? } (finalize/reopen need costing.finalize). */
   cost: (id, b = {}) => post(`/shipments/${id}/cost/`, b),
   costSheets: (id) => get(`/shipments/${id}/cost-sheets/`),
   exportCostSheet: (id, fmt = 'xlsx') => download(`/shipments/${id}/cost-sheet/export/`, { export: fmt }),
   fuel: (id) => get(`/shipments/${id}/fuel/`),
+  /** Vehicle / driver / truck readiness checklist: { ready, checks:[{key,label,ok,detail}], vehicle, driver, ... } */
+  compliance: (id) => get(`/shipments/${id}/compliance/`),
   timeline: (id) => get(`/shipments/${id}/timeline/`),
 };
 const shipmentStatusHistory = readOnly('shipment-status-history');
 const shipmentStages = crud('shipment-stages');
 const shipmentDocuments = {
   ...crud('shipment-documents'),
+  /** data: { company, shipment, doc_type, number?, notes?, file: File } */
   upload: (data) => post('/shipment-documents/', toFormData(data)),
 };
 const shipmentDeliveries = readOnly('shipment-deliveries');
@@ -404,6 +410,26 @@ const shipmentAllocations = readOnly('shipment-allocations');
 const costSheets = readOnly('cost-sheets');
 const exportDeclarations = withStatus('export-declarations', crud('export-declarations'));
 const complianceChecks = crud('compliance-checks');
+/**
+ * Trip budget -> advance -> reconciliation.
+ * create / update body: { shipment, recipient?, recipient_name, recipient_phone, payment_method, notes,
+ *                         lines: [{ category, description, budget_amount, requested_amount, legal_basis, issuing_authority }] }
+ * Approving / rejecting the advance itself is done through api.approvals (the request shows up on the Approvals page).
+ */
+const tripAdvances = {
+  ...withSubmit('trip-advances', crud('trip-advances')),
+  /** Approver reduces approved amounts while awaiting approval. lines: [{ id, approved_amount }] */
+  adjust: (id, lines) => post(`/trip-advances/${id}/adjust/`, { lines }),
+  /** body: { payment_method: CASH|MPESA|BANK, bank_account?, payment_reference?, recipient?, recipient_name?, recipient_phone? } */
+  pay: (id, b) => post(`/trip-advances/${id}/pay/`, b),
+  /** body: { lines: [{ id, actual_amount, receipt_no?, legal_basis?, issuing_authority? }], returned_amount?, return_reference?, notes? } */
+  submitReconciliation: (id, b) => post(`/trip-advances/${id}/submit-reconciliation/`, b),
+  /** A different user approves; draft expenses are created for the actual spend. */
+  approveReconciliation: (id) => post(`/trip-advances/${id}/approve-reconciliation/`),
+  rejectReconciliation: (id, comment = '') => post(`/trip-advances/${id}/reject-reconciliation/`, { comment }),
+};
+
+
 
 // ------------------------------------------------------------------ expenses & payments
 const expenseCategories = crud('expense-categories');
@@ -541,6 +567,7 @@ const ai = {
 };
 
 // ------------------------------------------------------------------ public surface
+
 const api = {
   auth,
   // administration & company
@@ -560,7 +587,7 @@ const api = {
   transporters, transporterContracts, transporterRates, transporterVehicles, transportBookings, transporterInvoices,
   // shipments & customs
   shipments, shipmentStatusHistory, shipmentStages, shipmentDocuments, shipmentDeliveries, shipmentAllocations, costSheets,
-  exportDeclarations, complianceChecks,
+  exportDeclarations, complianceChecks, tripAdvances,
   // finance
   expenseCategories, expenses, payments, bankAccounts, bankTransactions, bankReconciliations, accounts, journals,
   fixedAssets, employees, leaveRequests, payrollConfigs, payrollRuns,

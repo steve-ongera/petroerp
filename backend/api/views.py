@@ -934,9 +934,6 @@ class TripAdvanceViewSet(make_viewset(m.TripAdvance, filters_=('shipment', 'reci
 
 
 
-@route('cost-sheets')
-class CostSheetViewSet(make_viewset(m.ShipmentCostSheet, readonly=True, filters_=('shipment', 'is_final'))):
-    pass
 
 
 # ====================================================================== expenses & payments

@@ -7,6 +7,9 @@
  *
  * Exports: CustomerModal (used by CustomerDetail) and ServerPagination (used by the
  * server-paginated Sales lists). Field now comes from the shared components/Field.
+ *
+ * The customer form has its own required Company field (legal entity). The API cannot guess it when a user
+ * has access to several entities and none is selected in the top bar, so it is always sent explicitly.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -20,7 +23,7 @@ const STATUS = ['ACTIVE', 'ON_HOLD', 'BLOCKED', 'INACTIVE'];
 const PAGE_SIZE = 25;
 
 const fmtMoney = (n, c = '') => {
-  if (n == null || n === '') return '—';
+  if (n == null || n === '') return 'â€”';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -67,7 +70,7 @@ export default function Customers() {
     <div>
       <div className="page-header">
         <div className="page-header__lead">
-          
+
           <div className="page-header__text">
             <h1 className="page-title">Customers</h1>
             <p className="page-subtitle">{activeCompanyObj ? activeCompanyObj.name : 'All entities'}</p>
@@ -181,7 +184,7 @@ export default function Customers() {
                       <td className="cell-name">{c.name}</td>
                       <td>{c.country}</td>
                       <td className="cell-num">{fmtMoney(c.credit_limit, c.currency)}</td>
-                      <td>{c.payment_terms || '—'}</td>
+                      <td>{c.payment_terms || 'â€”'}</td>
                       <td>{c.credit_period_days} days</td>
                       <td><span className={`status-pill ${customerStatusPill(c.status)}`}>{c.status.replace('_', ' ')}</span></td>
                       <td>
@@ -213,17 +216,32 @@ export default function Customers() {
 }
 
 export function CustomerModal({ row = {}, onClose, onSaved }) {
+  const { user } = useAuth();
   const { companyParams } = useApp();
   const isNew = !row.id;
+  const myCompanies = user?.companies || [];
+
+  // The legal entity: the row's own company when editing, otherwise the entity selected in the top bar,
+  // otherwise the user's only entity, otherwise the person must choose.
+  const initialCompany = () => {
+    if (!isNew) return String(row.company);
+    const selected = companyParams()?.company;
+    if (selected) return String(selected);
+    if (myCompanies.length === 1) return String(myCompanies[0].id);
+    return '';
+  };
+  const currencyOf = (companyId) => myCompanies.find((c) => String(c.id) === String(companyId))?.currency || '';
+
+  const [company, setCompany] = useState(initialCompany);
   const [currencies, setCurrencies] = useState([]);
-  const [form, setForm] = useState({
+  const [form, setForm] = useState(() => ({
     code: row.code || '', name: row.name || '', country: row.country || 'DRC',
     address: row.address || '', tax_registration: row.tax_registration || '',
     contact_person: row.contact_person || '', phone: row.phone || '', email: row.email || '',
-    currency: row.currency || '', credit_limit: row.credit_limit ?? '',
+    currency: row.currency || currencyOf(initialCompany()), credit_limit: row.credit_limit ?? '',
     payment_terms: row.payment_terms || '', credit_period_days: row.credit_period_days ?? 30,
     status: row.status || 'ACTIVE',
-  });
+  }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [fieldErr, setFieldErr] = useState({});
@@ -231,10 +249,28 @@ export function CustomerModal({ row = {}, onClose, onSaved }) {
 
   useEffect(() => { api.currencies.listAll().then(setCurrencies).catch(() => {}); }, []);
 
+  // If the user's company list arrives after the first render, pick the default then (create only).
+  useEffect(() => {
+    if (isNew && !company) {
+      const c = initialCompany();
+      if (c) { setCompany(c); setForm((f) => ({ ...f, currency: f.currency || currencyOf(c) })); }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  const changeCompany = (value) => {
+    setCompany(value);
+    // suggest the entity's functional currency when none has been chosen yet
+    if (isNew && !form.currency) setForm((f) => ({ ...f, currency: currencyOf(value) }));
+  };
+
   const submit = async (e) => {
-    e.preventDefault(); setBusy(true); setError(''); setFieldErr({});
+    e.preventDefault();
+    if (!company) { setError('Select the company (legal entity) for this customer.'); return; }
+    setBusy(true); setError(''); setFieldErr({});
     try {
-      const body = { ...form, company: companyParams().company };
+      const body = { ...form, company: Number(company) };
+      if (body.credit_limit === '') delete body.credit_limit;
       isNew ? await api.customers.create(body) : await api.customers.update(row.id, body);
       onSaved();
     } catch (err) { setError(errorMessage(err)); setFieldErr(fieldErrors(err)); }
@@ -262,6 +298,12 @@ export function CustomerModal({ row = {}, onClose, onSaved }) {
       <form id="customerForm" onSubmit={submit}>
         <h6 className="modal-section-title"><i className="bi bi-card-text" aria-hidden="true"></i>Customer Details</h6>
         <div className="form-grid">
+          <Field label="Company" required err={fieldErr.company}>
+            <select className="form-select" value={company} onChange={(e) => changeCompany(e.target.value)} required disabled={!isNew}>
+              <option value="">â€”</option>
+              {myCompanies.map((c) => <option key={c.id} value={c.id}>{c.code} Â· {c.name}</option>)}
+            </select>
+          </Field>
           <Field label="Code" err={fieldErr.code}>
             <input className="form-control font-mono" value={form.code} onChange={set('code')} disabled={!isNew}
                    placeholder="Auto-generated if blank" />
@@ -277,7 +319,9 @@ export function CustomerModal({ row = {}, onClose, onSaved }) {
             <input className="form-control" value={form.contact_person} onChange={set('contact_person')} />
           </Field>
           <Field label="Phone"><input className="form-control" value={form.phone} onChange={set('phone')} /></Field>
-          <Field label="Email"><input type="email" className="form-control" value={form.email} onChange={set('email')} /></Field>
+          <Field label="Email" err={fieldErr.email}>
+            <input type="email" className="form-control" value={form.email} onChange={set('email')} />
+          </Field>
           <Field label="Status">
             <select className="form-select" value={form.status} onChange={set('status')}>
               {STATUS.map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
@@ -290,13 +334,13 @@ export function CustomerModal({ row = {}, onClose, onSaved }) {
 
         <h6 className="modal-section-title"><i className="bi bi-credit-card" aria-hidden="true"></i>Credit & Terms</h6>
         <div className="form-grid">
-          <Field label="Currency">
-            <select className="form-select" value={form.currency} onChange={set('currency')}>
-              <option value="">—</option>
+          <Field label="Currency" required err={fieldErr.currency}>
+            <select className="form-select" value={form.currency} onChange={set('currency')} required>
+              <option value="">â€”</option>
               {currencies.map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
             </select>
           </Field>
-          <Field label="Credit limit">
+          <Field label="Credit limit" err={fieldErr.credit_limit}>
             <input type="number" step="0.01" className="form-control num" value={form.credit_limit} onChange={set('credit_limit')} />
           </Field>
           <Field label="Payment terms">
@@ -319,7 +363,7 @@ export function ServerPagination({ page, count, onChange, size = PAGE_SIZE }) {
   if (count <= size) return null;
   return (
     <div className="pagination pagination--bordered">
-      <span className="pagination__info">Page <strong>{page}</strong> of <strong>{pages}</strong> · {count} items</span>
+      <span className="pagination__info">Page <strong>{page}</strong> of <strong>{pages}</strong> Â· {count} items</span>
       <div className="pagination__list">
         <button className="pagination__btn" disabled={page <= 1} onClick={() => onChange(page - 1)}>Prev</button>
         <button className="pagination__btn active">{page}</button>
