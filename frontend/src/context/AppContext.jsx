@@ -1,11 +1,20 @@
 /**
- * Global app state: authentication, permissions, active legal entity, notifications, toasts.
+ * Global app state: authentication, role-based access, active legal entity, notifications, toasts.
  *
- *   const { user, can, login, logout } = useAuth();
+ *   const { user, can, canAny, login, logout } = useAuth();
  *   const { activeCompany, setActiveCompany, companies, notify } = useApp();
  *   api.suppliers.list({ ...companyParams() })      // adds ?company=<active> when one is selected
  *
- * `can('finance.view')` only shapes the UI. The server enforces every permission and entity restriction.
+ * Access is ROLE based (the backend returns user.role = Role.code, or 'SUPERUSER' for a superuser without a role):
+ *
+ *   can(['MD', 'ACCOUNTANT'])  -> true when the user's role is in the list
+ *   can([])                    -> Group Administrator only
+ *   can(null | undefined)      -> any signed-in user
+ *   can('procurement.edit')    -> legacy permission string: allowed for any signed-in user
+ *                                 (action buttons are not restricted; page access is controlled by navigation.js)
+ *
+ * The Group Administrator / super user always passes.
+ * `can()` only shapes the UI. The server enforces entity scoping and workflow rules.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import api, { auth, errorMessage, setUnauthorizedHandler } from '../services/api';
@@ -13,6 +22,8 @@ import api, { auth, errorMessage, setUnauthorizedHandler } from '../services/api
 const Ctx = createContext(null);
 const COMPANY_KEY = 'petroerp.company';
 const IDLE_MINUTES = Number(import.meta.env?.VITE_IDLE_MINUTES || 30);
+
+const isGroupAdminUser = (u) => !!u && (u.role === 'GROUP_ADMIN' || u.role === 'SUPERUSER');
 
 export function AppProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -50,10 +61,18 @@ export function AppProvider({ children }) {
   const logout = useCallback(() => { endSession(); }, [endSession]);
   const refreshUser = useCallback(async () => { const u = await auth.me(); setUser(u); return u; }, []);
 
-  // ---------- permissions
-  const perms = useMemo(() => new Set(user?.permissions || []), [user]);
-  const can = useCallback((code) => !code || perms.has(code), [perms]);
-  const canAny = useCallback((codes = []) => codes.some((c) => perms.has(c)), [perms]);
+  // ---------- access (role based)
+  const isGroupAdmin = isGroupAdminUser(user);
+
+  const can = useCallback((roles) => {
+    if (!user) return false;
+    if (roles == null || typeof roles === 'string') return true;  // no restriction, or a legacy permission code
+    if (isGroupAdminUser(user)) return true;
+    return Array.isArray(roles) && roles.includes(user.role);     // [] => Group Administrator only
+  }, [user]);
+
+  // true when `can` passes for at least one entry (each entry is a role array, a legacy code, or null)
+  const canAny = useCallback((list = []) => list.length === 0 || list.some((r) => can(r)), [can]);
 
   // ---------- legal entity filter
   const companies = user?.companies || [];
@@ -95,10 +114,10 @@ export function AppProvider({ children }) {
   }, [status, endSession, notify]);
 
   const value = useMemo(() => ({
-    user, status, login, logout, refreshUser, can, canAny,
+    user, status, login, logout, refreshUser, can, canAny, isGroupAdmin,
     companies, activeCompany, activeCompanyObj, setActiveCompany, companyParams,
     unread, refreshUnread, toasts, notify, dismissToast,
-  }), [user, status, login, logout, refreshUser, can, canAny, companies, activeCompany, activeCompanyObj,
+  }), [user, status, login, logout, refreshUser, can, canAny, isGroupAdmin, companies, activeCompany, activeCompanyObj,
     setActiveCompany, companyParams, unread, refreshUnread, toasts, notify, dismissToast]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
@@ -110,8 +129,8 @@ function useCtx() {
   return v;
 }
 export const useAuth = () => {
-  const { user, status, login, logout, refreshUser, can, canAny } = useCtx();
-  return { user, status, login, logout, refreshUser, can, canAny };
+  const { user, status, login, logout, refreshUser, can, canAny, isGroupAdmin } = useCtx();
+  return { user, status, login, logout, refreshUser, can, canAny, isGroupAdmin };
 };
 export const useApp = () => {
   const { companies, activeCompany, activeCompanyObj, setActiveCompany, companyParams, unread, refreshUnread, toasts, notify, dismissToast } = useCtx();
