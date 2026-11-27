@@ -344,11 +344,11 @@ const pricing = {
 // ------------------------------------------------------------------ owned fleet
 const vehicles = {
   ...crud('vehicles'),
-  /** Creates the Expense (money) + VehicleExpense (litres/odometer) together. */
   logExpense: (id, b) => post(`/vehicles/${id}/log-expense/`, b),
-  /** cost/km, cost/trip, cost per delivered litre, revenue, profit. Params: date_from, date_to. */
   metrics: (id, params) => get(`/vehicles/${id}/metrics/`, params),
+  tracking: (id, params) => get(`/vehicles/${id}/tracking/`, params),
 };
+
 const trailers = crud('trailers');
 const drivers = {
   ...crud('drivers'),
