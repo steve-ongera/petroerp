@@ -1,4 +1,4 @@
-ï»¿/**
+/**
  * Customs: export declarations + compliance checks.
  * - CRUD /export-declarations/     (withStatus via set-status)
  * - CRUD /compliance-checks/
@@ -86,11 +86,11 @@ export default function Customs() {
     <div>
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-shield-check"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Customs</h1>
             <p className="page-subtitle">
-              Export declarations and compliance{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
+              Export declarations and compliance{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -208,11 +208,11 @@ export default function Customs() {
                     <tr key={d.id}>
                       <td className="cell-mono text-brand fw-600">{d.reference}</td>
                       <td>{d.shipment_label || d.shipment}</td>
-                      <td className="cell-mono">{d.declaration_number || 'â€”'}</td>
-                      <td className="cell-mono">{d.customs_reference || 'â€”'}</td>
-                      <td>{d.border_crossing_label || 'â€”'}</td>
-                      <td>{d.export_date || 'â€”'}</td>
-                      <td>{d.clearance_date || 'â€”'}</td>
+                      <td className="cell-mono">{d.declaration_number || '—'}</td>
+                      <td className="cell-mono">{d.customs_reference || '—'}</td>
+                      <td>{d.border_crossing_label || '—'}</td>
+                      <td>{d.export_date || '—'}</td>
+                      <td>{d.clearance_date || '—'}</td>
                       <td><span className={`status-pill ${declPill(d.status)}`}>{d.status}</span></td>
                       <td>
                         {can('customs.edit') && d.status !== 'CLEARED' && d.status !== 'REJECTED' && (
@@ -252,9 +252,9 @@ export default function Customs() {
                       <td className="cell-name">{c.shipment_label || c.shipment}</td>
                       <td>{c.requirement_label || c.requirement}</td>
                       <td><span className={`status-pill ${checkPill(c.status)}`}>{c.status.replace('_', ' ')}</span></td>
-                      <td className="cell-mono">{c.document_ref || 'â€”'}</td>
-                      <td>{c.checked_by_label || 'â€”'}</td>
-                      <td>{c.checked_at || 'â€”'}</td>
+                      <td className="cell-mono">{c.document_ref || '—'}</td>
+                      <td>{c.checked_by_label || '—'}</td>
+                      <td>{c.checked_at || '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -343,13 +343,13 @@ function DeclarationModal({ companyParams, onClose, onSaved }) {
         <div className="form-grid">
           <Field label="Shipment" required err={fieldErr.shipment}>
             <select className="form-select" value={form.shipment} onChange={set('shipment')} required>
-              <option value="">â€”</option>
+              <option value="">—</option>
               {shipments.map((s) => <option key={s.id} value={s.id}>{s.reference}</option>)}
             </select>
           </Field>
           <Field label="Border crossing" err={fieldErr.border_crossing}>
             <select className="form-select" value={form.border_crossing} onChange={set('border_crossing')}>
-              <option value="">â€”</option>
+              <option value="">—</option>
               {borders.map((b) => <option key={b.id} value={b.id}>{b.name || b.code}</option>)}
             </select>
           </Field>
@@ -419,13 +419,13 @@ function CheckModal({ companyParams, onClose, onSaved }) {
         <div className="form-grid">
           <Field label="Shipment" required err={fieldErr.shipment}>
             <select className="form-select" value={form.shipment} onChange={set('shipment')} required>
-              <option value="">â€”</option>
+              <option value="">—</option>
               {shipments.map((s) => <option key={s.id} value={s.id}>{s.reference}</option>)}
             </select>
           </Field>
           <Field label="Requirement" required err={fieldErr.requirement}>
             <select className="form-select" value={form.requirement} onChange={set('requirement')} required>
-              <option value="">â€”</option>
+              <option value="">—</option>
               {requirements.map((r) => <option key={r.id} value={r.id}>{r.name || r.code}</option>)}
             </select>
           </Field>

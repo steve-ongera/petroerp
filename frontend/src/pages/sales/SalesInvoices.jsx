@@ -1,4 +1,4 @@
-ï»¿/**
+/**
  * Sales invoices.
  * - CRUD /sales-invoices/ (nested lines)
  * - POST /sales-invoices/:id/post/ { override }   (credit-limit override needs credit.override)
@@ -12,7 +12,7 @@ import { ServerPagination } from './Customers';
 
 const STATUSES = ['DRAFT', 'POSTED', 'PART_PAID', 'PAID', 'CANCELLED'];
 const fmtMoney = (n, c = '') => {
-  if (n == null || n === '') return 'â€”';
+  if (n == null || n === '') return '—';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -73,7 +73,7 @@ export default function SalesInvoices() {
     <div>
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-receipt-cutoff"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Sales invoices</h1>
             <p className="page-subtitle">{activeCompanyObj ? activeCompanyObj.name : 'All entities'}</p>
@@ -186,7 +186,7 @@ export default function SalesInvoices() {
                       </td>
                       <td className="cell-name">{i.customer_label || i.customer}</td>
                       <td>{i.invoice_date}</td>
-                      <td>{i.due_date || 'â€”'}</td>
+                      <td>{i.due_date || '—'}</td>
                       <td className="cell-num">{fmtMoney(i.total, i.currency)}</td>
                       <td className="cell-num">{fmtMoney(i.outstanding)}</td>
                       <td><span className={`status-pill ${invoiceStatusPill(i.status)}`}>{i.status.replace('_', ' ')}</span></td>

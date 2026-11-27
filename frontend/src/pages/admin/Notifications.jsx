@@ -1,4 +1,4 @@
-ï»¿/**
+/**
  * Notifications inbox.
  * - GET  /notifications/           user-scoped list (server filters by request.user)
  * - GET  /notifications/unread/    -> { count } (already polled by AppContext)
@@ -36,7 +36,7 @@ const LEVEL_ICON = {
 };
 
 function fmtDateTime(v) {
-  if (!v) return 'â€”';
+  if (!v) return '—';
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString();
 }
@@ -96,7 +96,7 @@ export default function Notifications() {
       {/* ---------- Page header ---------- */}
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-bell"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Notifications</h1>
             <p className="page-subtitle">{unread > 0 ? `${unread} unread on this page` : 'You are all caught up'}</p>
@@ -190,7 +190,7 @@ export default function Notifications() {
         {count > PAGE_SIZE && (
           <div className="pagination pagination--bordered">
             <span className="pagination__info">
-              Page <strong>{page}</strong> of <strong>{pages}</strong> Â· {count} items
+              Page <strong>{page}</strong> of <strong>{pages}</strong> · {count} items
             </span>
             <div className="pagination__list">
               <button className="pagination__btn" disabled={page <= 1} onClick={() => setPage(page - 1)}>Prev</button>

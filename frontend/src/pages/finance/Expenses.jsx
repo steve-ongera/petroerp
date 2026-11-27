@@ -1,9 +1,9 @@
-ï»¿/**
+/**
  * Expenses.
- * - CRUD /expenses/ (withSubmit)         â†’ ExpenseSerializer (total, outstanding computed)
- * - POST /expenses/:id/submit/           â†’ request approval / auto-approve below policy
- * - POST /expenses/:id/post/             â†’ svc.post_expense (journal + optional direct allocation)
- * - POST /expenses/:id/allocate/         â†’ svc.allocate_expense (DIRECT/PERCENT/AMOUNT/LITRES/EQUAL)
+ * - CRUD /expenses/ (withSubmit)         ? ExpenseSerializer (total, outstanding computed)
+ * - POST /expenses/:id/submit/           ? request approval / auto-approve below policy
+ * - POST /expenses/:id/post/             ? svc.post_expense (journal + optional direct allocation)
+ * - POST /expenses/:id/allocate/         ? svc.allocate_expense (DIRECT/PERCENT/AMOUNT/LITRES/EQUAL)
  *
  * Expense.duplicate_key is set server-side; posting is rejected if status != APPROVED.
  * Paging is server-side (25 per page).
@@ -32,7 +32,7 @@ const PILL = {
 const pill = (s) => `status-pill ${PILL[s] || 'status-pill--neutral'}`;
 
 const fmtMoney = (n, c = '') => {
-  if (n == null || n === '') return 'â€”';
+  if (n == null || n === '') return '—';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -105,11 +105,11 @@ export default function Expenses() {
       {/* ---------- Page header ---------- */}
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-receipt"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Expenses</h1>
             <p className="page-subtitle">
-              Operating costs, shipment costs and payments{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
+              Operating costs, shipment costs and payments{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -322,8 +322,8 @@ function ExpenseModal({ row, cats, suppliers, bankAccounts, currencies, companyP
             </Field>
             <Field label="Category" required err={fieldErr.category}>
               <select className="form-select" value={form.category} onChange={set('category')} required>
-                <option value="">â€”</option>
-                {cats.map((c) => <option key={c.id} value={c.id}>{c.code} Â· {c.name}</option>)}
+                <option value="">—</option>
+                {cats.map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}
               </select>
             </Field>
             <Field label="Description" required err={fieldErr.description} span>
@@ -331,8 +331,8 @@ function ExpenseModal({ row, cats, suppliers, bankAccounts, currencies, companyP
             </Field>
             <Field label="Supplier">
               <select className="form-select" value={form.supplier} onChange={set('supplier')}>
-                <option value="">â€” none â€”</option>
-                {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} Â· {s.name}</option>)}
+                <option value="">— none —</option>
+                {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}
               </select>
             </Field>
             <Field label="Payee">
@@ -365,8 +365,8 @@ function ExpenseModal({ row, cats, suppliers, bankAccounts, currencies, companyP
             {form.payment_method !== 'CREDIT' && (
               <Field label="Bank / cash account" required err={fieldErr.bank_account} span>
                 <select className="form-select" value={form.bank_account} onChange={set('bank_account')} required>
-                  <option value="">â€”</option>
-                  {bankAccounts.map((b) => <option key={b.id} value={b.id}>{b.name} Â· {b.currency}</option>)}
+                  <option value="">—</option>
+                  {bankAccounts.map((b) => <option key={b.id} value={b.id}>{b.name} · {b.currency}</option>)}
                 </select>
               </Field>
             )}
@@ -450,8 +450,8 @@ function AllocateModal({ expense, companyParams, onClose, onSaved }) {
               <div style={{ flex: 1 }}>
                 <label className="form-label">Shipment</label>
                 <select className="form-select" value={t.shipment} onChange={(e) => setTarget(i, 'shipment', e.target.value)} required>
-                  <option value="">â€”</option>
-                  {shipments.map((s) => <option key={s.id} value={s.id}>{s.reference} Â· {s.product_label || ''}</option>)}
+                  <option value="">—</option>
+                  {shipments.map((s) => <option key={s.id} value={s.id}>{s.reference} · {s.product_label || ''}</option>)}
                 </select>
               </div>
               {method === 'PERCENT' && (

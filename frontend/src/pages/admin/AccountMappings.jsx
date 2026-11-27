@@ -1,4 +1,4 @@
-ï»¿/**
+/**
  * Account mappings: system key -> account per legal entity.
  * - CRUD /account-mappings/   (company scoped)
  * - Account drop-down uses /accounts/ filtered to the active company.
@@ -67,11 +67,11 @@ export default function AccountMappings() {
       {/* ---------- Page header ---------- */}
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-diagram-3"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Account mappings</h1>
             <p className="page-subtitle">
-              System keys â†’ GL accounts{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
+              System keys ? GL accounts{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -160,10 +160,10 @@ export default function AccountMappings() {
                     <tr key={r.id}>
                       <td className="cell-mono text-brand fw-600">{r.key}</td>
                       <td className="cell-name">
-                        {r.account_label || 'â€”'}
+                        {r.account_label || '—'}
                         {r.account_code && <div className="cell-mono text-muted-soft" style={{ fontSize: '0.8rem' }}>{r.account_code}</div>}
                       </td>
-                      <td>{r.account_type ? <span className="badge badge-neutral">{r.account_type}</span> : 'â€”'}</td>
+                      <td>{r.account_type ? <span className="badge badge-neutral">{r.account_type}</span> : '—'}</td>
                       <td>
                         <div className="row-actions">
                           <button className="btn btn-icon" title="Edit" aria-label="Edit" onClick={() => setEditing(r)}>
@@ -252,10 +252,10 @@ function MappingModal({ row, accounts, companyParams, onClose, onSaved }) {
           </Field>
           <Field label="Account" required err={fieldErr.account} span>
             <select className="form-select" value={form.account} onChange={set('account')} required>
-              <option value="">â€”</option>
+              <option value="">—</option>
               {accounts.map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.code} Â· {a.name} ({a.account_type}{a.is_postable ? '' : ' â€“ not postable'})
+                  {a.code} · {a.name} ({a.account_type}{a.is_postable ? '' : ' – not postable'})
                 </option>
               ))}
             </select>

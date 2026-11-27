@@ -1,4 +1,4 @@
-ï»¿/**
+/**
  * Pricing preview.
  * - POST /pricing/calculate/  { method, cost?, contract_price?, base_price?, premium?,
  *                               profit_per_litre?, markup_pct?, margin_pct? }
@@ -11,8 +11,8 @@ import Field from '../../components/Field';
 import { SectionHeader, SectionBody, KV, EmptyState } from '../../components/PageSection';
 
 const METHODS = ['FIXED', 'MARKET', 'COST_PLUS'];
-const fmt = (n) => (n == null || n === '' ? 'â€”' : Number(n).toFixed(6));
-const pct = (n) => (n != null ? Number(n).toFixed(3) : 'â€”');
+const fmt = (n) => (n == null || n === '' ? '—' : Number(n).toFixed(6));
+const pct = (n) => (n != null ? Number(n).toFixed(3) : '—');
 
 export default function Pricing() {
   const [form, setForm] = useState({
@@ -40,7 +40,7 @@ export default function Pricing() {
     <div>
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-calculator"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Pricing calculator</h1>
             <p className="page-subtitle">Preview selling price, margin and markup without saving anything</p>

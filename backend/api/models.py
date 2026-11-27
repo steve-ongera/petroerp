@@ -185,7 +185,7 @@ class Line(models.Model):
         super().save(*a, **kw)
 
 
-# ================================================================ CONTROL
+# Not used for now================================================================ CONTROL
 class Permission(models.Model):
     code = models.CharField(max_length=60, unique=True)
     description = Char(200)

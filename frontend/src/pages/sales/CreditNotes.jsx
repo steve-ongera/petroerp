@@ -1,7 +1,7 @@
-ï»¿/**
+/**
  * Sales credit notes.
  * - CRUD /sales-credit-notes/ (crud)
- * - POST /sales-credit-notes/:id/post/  â†’ svc.post_sales_credit_note (optionally restock)
+ * - POST /sales-credit-notes/:id/post/  ? svc.post_sales_credit_note (optionally restock)
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth, useApp } from '../../context/AppContext';
@@ -14,7 +14,7 @@ import TableSkeleton from '../../components/TableSkeleton';
 const STATUS = ['DRAFT', 'POSTED'];
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtMoney = (n, c = '') => {
-  if (n == null || n === '') return 'â€”';
+  if (n == null || n === '') return '—';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -59,7 +59,7 @@ export default function CreditNotes() {
     <div>
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-receipt"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Credit notes</h1>
             <p className="page-subtitle">{activeCompanyObj ? activeCompanyObj.name : 'All entities'}</p>
@@ -171,10 +171,10 @@ export default function CreditNotes() {
                       <td className="cell-mono text-brand fw-600">{cn.reference}</td>
                       <td>{cn.note_date}</td>
                       <td className="cell-mono">{cn.invoice_label || cn.invoice}</td>
-                      <td>{cn.product_label || 'â€”'}</td>
+                      <td>{cn.product_label || '—'}</td>
                       <td className="cell-num">{Number(cn.quantity || 0).toLocaleString()}</td>
                       <td className="cell-num">{fmtMoney(cn.total, cn.currency)}</td>
-                      <td className="text-truncate" style={{ maxWidth: 240 }}>{cn.reason || 'â€”'}</td>
+                      <td className="text-truncate" style={{ maxWidth: 240 }}>{cn.reason || '—'}</td>
                       <td>
                         <span className={`status-pill ${cn.status === 'POSTED' ? 'status-pill--info' : 'status-pill--neutral'}`}>{cn.status}</span>
                       </td>
@@ -269,18 +269,18 @@ function CreditNoteModal({ row, companyParams, onClose, onSaved }) {
         <div className="form-grid">
           <Field label="Invoice" required err={fieldErr.invoice}>
             <select className="form-select" value={form.invoice} onChange={set('invoice')} required>
-              <option value="">â€”</option>
+              <option value="">—</option>
               {invoices.map((i) => (
                 <option key={i.id} value={i.id}>
-                  {i.reference} Â· {i.customer_label || i.customer} Â· {fmtMoney(i.total, i.currency)}
+                  {i.reference} · {i.customer_label || i.customer} · {fmtMoney(i.total, i.currency)}
                 </option>
               ))}
             </select>
           </Field>
           <Field label="Product">
             <select className="form-select" value={form.product} onChange={set('product')}>
-              <option value="">â€”</option>
-              {products.map((p) => <option key={p.id} value={p.id}>{p.code} Â· {p.name}</option>)}
+              <option value="">—</option>
+              {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
             </select>
           </Field>
           <Field label="Note date" required>
@@ -310,8 +310,8 @@ function CreditNoteModal({ row, companyParams, onClose, onSaved }) {
           </Field>
           <Field label="Restock tank">
             <select className="form-select" value={form.restock_tank} onChange={set('restock_tank')}>
-              <option value="">â€” do not restock â€”</option>
-              {tanks.map((t) => <option key={t.id} value={t.id}>{t.code} Â· {t.name}</option>)}
+              <option value="">— do not restock —</option>
+              {tanks.map((t) => <option key={t.id} value={t.id}>{t.code} · {t.name}</option>)}
             </select>
           </Field>
         </div>

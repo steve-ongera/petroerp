@@ -832,11 +832,18 @@ def check_min_margin(company, product, margin_pct, user):
             f'Only these roles may go below it: {", ".join(BELOW_MARGIN_ROLES)}.')
 
 
-def apply_line_pricing(company, line, contract, order_date, user):
+def apply_line_pricing(company, line, contract, order_date, user, currency=None):
     """Fill unit_price / margin on a SalesOrderLine (dict) from its pricing method and enforce minimum margin."""
     method = line.get('pricing_method', 'FIXED')
     product = line['product']
-    cost = line.get('cost_per_litre') or estimate_cost_per_litre(company, product)
+    
+    cost = line.get('cost_per_litre')
+    if not cost:
+        cost = estimate_cost_per_litre(company, product)      # in company currency
+        if cost and currency and currency != company.functional_currency_id:
+            rate = get_rate(company.functional_currency_id, currency, order_date)[0]
+            cost = q6(cost * rate)                            
+            
     base = line.get('base_price')
     if method == 'MARKET' and not base:
         mp = MarketPrice.objects.filter(company=company, product=product, reference_date__lte=order_date) \

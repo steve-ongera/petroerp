@@ -1,9 +1,9 @@
-﻿/**
+/**
  * Suppliers list.
  * - CRUD /suppliers/      (crud)
- * - GET  /suppliers/:id/statement/        → running balance per currency
- * - GET  /suppliers/:id/price-history/    → last 200 supplier prices
- * - GET  /suppliers/:id/performance/      → orders, fill rate, invoice exceptions
+ * - GET  /suppliers/:id/statement/        ? running balance per currency
+ * - GET  /suppliers/:id/price-history/    ? last 200 supplier prices
+ * - GET  /suppliers/:id/performance/      ? orders, fill rate, invoice exceptions
  *
  * "New supplier" here, detail & sub-features on SupplierDetail.jsx.
  * Exports SupplierModal and supplierStatusPill for SupplierDetail.
@@ -61,7 +61,7 @@ export default function Suppliers() {
     <div>
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-building"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Suppliers</h1>
             <p className="page-subtitle">{activeCompanyObj ? activeCompanyObj.name : 'All entities'}</p>
@@ -174,7 +174,7 @@ export default function Suppliers() {
                       </td>
                       <td className="cell-name">{s.name}</td>
                       <td>{s.country}</td>
-                      <td className="cell-mono">{s.tax_pin || '—'}</td>
+                      <td className="cell-mono">{s.tax_pin || '�'}</td>
                       <td className="cell-num">{Number(s.credit_limit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                       <td>{s.payment_terms_days} days</td>
                       <td><span className={`status-pill ${supplierStatusPill(s.status)}`}>{s.status}</span></td>
@@ -301,7 +301,7 @@ export function SupplierModal({ row = {}, onClose, onSaved }) {
           </Field>
           <Field label="Currency">
             <select className="form-select" value={form.currency} onChange={set('currency')}>
-              <option value="">—</option>
+              <option value="">�</option>
               {currencies.map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
             </select>
           </Field>

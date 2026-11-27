@@ -1,7 +1,7 @@
-ï»¿/**
+/**
  * Storage tanks.
  * - CRUD /storage-tanks/    (crud)
- * - GET  /storage-tanks/:id/position/?date=YYYY-MM-DD  â†’ book balance + daily movements
+ * - GET  /storage-tanks/:id/position/?date=YYYY-MM-DD  ? book balance + daily movements
  * - /depots/ (crud) is shown as a sibling tab so depot data can be managed here too.
  */
 import { useCallback, useEffect, useState } from 'react';
@@ -15,7 +15,7 @@ import TableSkeleton from '../../components/TableSkeleton';
 const STATUS = ['ACTIVE', 'MAINTENANCE', 'INACTIVE'];
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtMoney = (n, c = '') => {
-  if (n == null || n === '') return 'â€”';
+  if (n == null || n === '') return '—';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -67,7 +67,7 @@ export default function Tanks() {
       {/* ---------- Page header: icon tile + title + actions ---------- */}
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-fuel-pump"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Tanks &amp; depots</h1>
             <p className="page-subtitle">{activeCompanyObj ? activeCompanyObj.name : 'All entities'}</p>
@@ -140,8 +140,8 @@ export default function Tanks() {
                     <tr key={t.id}>
                       <td className="cell-mono text-brand fw-600">{t.code}</td>
                       <td className="cell-name">{t.name}</td>
-                      <td>{t.depot_label || 'â€”'}</td>
-                      <td>{t.product_label ? <span className="chip">{t.product_label}</span> : 'â€”'}</td>
+                      <td>{t.depot_label || '—'}</td>
+                      <td>{t.product_label ? <span className="chip">{t.product_label}</span> : '—'}</td>
                       <td className="cell-num">{Number(t.capacity || 0).toLocaleString()}</td>
                       <td className="cell-num">{Number(t.min_level || 0).toLocaleString()}</td>
                       <td><span className={`status-pill ${tankPill(t.status)}`}>{t.status}</span></td>
@@ -183,7 +183,7 @@ export default function Tanks() {
                     <tr key={d.id}>
                       <td className="cell-mono text-brand fw-600">{d.code}</td>
                       <td className="cell-name">{d.name}</td>
-                      <td>{d.location || 'â€”'}</td>
+                      <td>{d.location || '—'}</td>
                       <td>{d.country}</td>
                       <td>
                         <span className={`status-pill ${d.is_active ? 'status-pill--success' : 'status-pill--neutral'}`}>
@@ -276,14 +276,14 @@ function TankModal({ row, depots, products, companyParams, onClose, onSaved }) {
           </Field>
           <Field label="Depot" required>
             <select className="form-select" value={form.depot} onChange={set('depot')} required>
-              <option value="">â€”</option>
-              {depots.map((d) => <option key={d.id} value={d.id}>{d.code} Â· {d.name}</option>)}
+              <option value="">—</option>
+              {depots.map((d) => <option key={d.id} value={d.id}>{d.code} · {d.name}</option>)}
             </select>
           </Field>
           <Field label="Product">
             <select className="form-select" value={form.product} onChange={set('product')}>
-              <option value="">â€” assigned by stock movements â€”</option>
-              {products.map((p) => <option key={p.id} value={p.id}>{p.code} Â· {p.name}</option>)}
+              <option value="">— assigned by stock movements —</option>
+              {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
             </select>
           </Field>
           <Field label="Capacity (L)">
@@ -375,7 +375,7 @@ function PositionModal({ tank, data, onClose }) {
       show
       onClose={onClose}
       dismissOnBackdrop
-      title={`${tank.code} Â· Position`}
+      title={`${tank.code} · Position`}
       subtitle={tank.name}
       icon="bi-bar-chart"
       footer={<button type="button" className="btn btn-secondary" onClick={onClose}>Close</button>}

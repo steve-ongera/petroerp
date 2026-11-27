@@ -57,7 +57,7 @@ def make_nested(model, line_model, parent_field, read_only=(), computed=()):
                 if ln.get('tax_code') and not ln.get('tax_rate'):
                     ln['tax_rate'] = svc.get_tax_rate(obj.company, ln['tax_code'], on)
                 if line_model is m.SalesOrderLine:
-                    svc.apply_line_pricing(obj.company, ln, obj.contract, obj.order_date, user)
+                    svc.apply_line_pricing(obj.company, ln, obj.contract, obj.order_date, user, obj.currency_id)
                 line_model.objects.create(**{parent_field: obj}, **ln)
             if hasattr(obj, 'recalc'):
                 obj.recalc()

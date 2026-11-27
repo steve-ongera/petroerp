@@ -1,7 +1,7 @@
-ï»¿/**
- * Shipment detail â€” the operations cockpit.
- * Handles: submit â†’ approve (via Approvals) â†’ record loading â†’ update status (approve/await loading/â€¦) â†’
- * record delivery â†’ compute cost sheet â†’ fuel variance â†’ close.
+/**
+ * Shipment detail — the operations cockpit.
+ * Handles: submit ? approve (via Approvals) ? record loading ? update status (approve/await loading/…) ?
+ * record delivery ? compute cost sheet ? fuel variance ? close.
  *
  * Endpoints used:
  *   /shipments/:id/ (detail + lines)
@@ -12,7 +12,7 @@
  *   /shipments/:id/record-delivery/   { delivered_quantity, delivery_date?, is_final?, received_by?, notes?, pod_file? }
  *   /shipments/:id/cost/              { finalize?, reopen?, notes? }
  *   /shipments/:id/cost-sheets/
- *   /shipments/:id/cost-sheet/export  â†’ xlsx/pdf
+ *   /shipments/:id/cost-sheet/export  ? xlsx/pdf
  *   /shipments/:id/fuel/
  *   /shipments/:id/timeline/
  *   /expenses?shipment=...            (to allocate)
@@ -52,7 +52,7 @@ const TRANSITIONS = {
 };
 
 const fmtMoney = (n, c = '') => {
-  if (n == null || n === '') return 'â€”';
+  if (n == null || n === '') return '—';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -178,14 +178,14 @@ export default function ShipmentDetail() {
       {/* ---------- Page header: icon tile + title + actions ---------- */}
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-box-seam"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">
               {s.reference}{' '}
               <span className={`status-pill ${statusPill(s.status)}`}>{label(s.status)}</span>
             </h1>
             <p className="page-subtitle">
-              {s.customer_label || s.supplier_label || 'â€”'} Â· {s.product_label || s.product} Â· {Number(s.quantity || 0).toLocaleString()} L
+              {s.customer_label || s.supplier_label || '—'} · {s.product_label || s.product} · {Number(s.quantity || 0).toLocaleString()} L
             </p>
           </div>
         </div>
@@ -265,14 +265,14 @@ function Overview({ s, lines, fuel }) {
         <SectionHeader first icon="bi-info-circle" title="Shipment Details" />
         <Body>
           <KV items={[
-            ['Customer / supplier', s.customer_label || s.supplier_label || 'â€”'],
+            ['Customer / supplier', s.customer_label || s.supplier_label || '—'],
             ['Product', s.product_label || s.product],
             ['Quantity', `${Number(s.quantity || 0).toLocaleString()} L`],
             ['Loaded quantity', `${Number(s.loading_quantity || 0).toLocaleString()} L`],
-            ['Origin â†’ Destination', `${s.origin || 'â€”'} â†’ ${s.destination || 'â€”'}`],
-            ['Expected delivery', s.expected_delivery || 'â€”'],
-            ['Vehicle / Driver', `${s.vehicle_label || s.hired_truck_label || 'â€”'} Â· ${s.driver_label || 'â€”'}`],
-            ['Transporter', s.transporter_label || 'â€”'],
+            ['Origin ? Destination', `${s.origin || '—'} ? ${s.destination || '—'}`],
+            ['Expected delivery', s.expected_delivery || '—'],
+            ['Vehicle / Driver', `${s.vehicle_label || s.hired_truck_label || '—'} · ${s.driver_label || '—'}`],
+            ['Transporter', s.transporter_label || '—'],
           ]} />
         </Body>
       </section>
@@ -364,7 +364,7 @@ function LoadingTab({ shipment, lines, onChanged, canEdit }) {
         <EmptyState
           icon="bi-lock"
           title="Loading is only editable while status is LOADING"
-          text="Move the shipment to AWAITING LOADING â†’ LOADING first."
+          text="Move the shipment to AWAITING LOADING ? LOADING first."
         />
       </section>
     );
@@ -393,7 +393,7 @@ function LoadingTab({ shipment, lines, onChanged, canEdit }) {
                   return (
                     <tr key={r.id}>
                       <td className="cell-mono">#{r.id}</td>
-                      <td className="cell-name">{l?.product_label || 'â€”'}</td>
+                      <td className="cell-name">{l?.product_label || '—'}</td>
                       <td className="cell-num">{Number(l?.quantity || 0).toLocaleString()}</td>
                       <td>
                         <input type="number" step="0.001" className="form-control num" value={r.loaded_quantity}
@@ -401,7 +401,7 @@ function LoadingTab({ shipment, lines, onChanged, canEdit }) {
                       </td>
                       <td>
                         <select className="form-select" value={r.tank} disabled={!canEdit} onChange={(e) => setRow(i, 'tank', e.target.value)}>
-                          <option value="">â€”</option>
+                          <option value="">—</option>
                           {tanks.map((t) => <option key={t.id} value={t.id}>{t.code}</option>)}
                         </select>
                       </td>
@@ -487,7 +487,7 @@ function DeliveriesTab({ shipment, onChanged, canEdit }) {
                       <td className="cell-num">{Number(d.shortage_pct || 0).toFixed(3)}%</td>
                       <td className="cell-num">{fmtMoney(d.cogs_value)}</td>
                       <td className="cell-num">{fmtMoney(d.loss_value)}</td>
-                      <td>{d.is_final ? <span className="status-pill status-pill--success">Final</span> : 'â€”'}</td>
+                      <td>{d.is_final ? <span className="status-pill status-pill--success">Final</span> : '—'}</td>
                       <td>
                         <span className={`status-pill ${d.status === 'APPROVED' ? 'status-pill--success' : d.status === 'REJECTED' ? 'status-pill--danger' : 'status-pill--warning'}`}>
                           {d.status}
@@ -603,7 +603,7 @@ function CostingTab({ shipment, sheets, onChanged, canFinalize }) {
       {error && <div className="alert alert-danger" role="alert">{error}</div>}
 
       <section className="page-card">
-        <SectionHeader first icon="bi-calculator" title="Cost Sheet" subtitle={latest ? `v${latest.version}${latest.is_final ? ' Â· final' : ''}` : undefined}>
+        <SectionHeader first icon="bi-calculator" title="Cost Sheet" subtitle={latest ? `v${latest.version}${latest.is_final ? ' · final' : ''}` : undefined}>
           <span className="row-actions">
             {latest && (
               <>
@@ -634,7 +634,7 @@ function CostingTab({ shipment, sheets, onChanged, canFinalize }) {
         ) : (
           <Body>
             <KV items={[
-              ['Version', `v${latest.version}${latest.is_final ? ' Â· final' : ''}`],
+              ['Version', `v${latest.version}${latest.is_final ? ' · final' : ''}`],
               ['Purchase cost', fmtMoney(latest.purchase_cost)],
               ['Direct expenses', fmtMoney(latest.total_direct_expenses)],
               ['Total cost', fmtMoney(latest.total_shipment_cost)],
@@ -692,7 +692,7 @@ function CostingTab({ shipment, sheets, onChanged, canFinalize }) {
                   {sheets.map((sh) => (
                     <tr key={sh.id}>
                       <td className="cell-mono fw-600">v{sh.version}</td>
-                      <td>{sh.is_final ? <span className="status-pill status-pill--success">Final</span> : 'â€”'}</td>
+                      <td>{sh.is_final ? <span className="status-pill status-pill--success">Final</span> : '—'}</td>
                       <td className="cell-num">{fmtMoney(sh.total_shipment_cost)}</td>
                       <td className="cell-num">{Number(sh.delivered_litres || 0).toLocaleString()}</td>
                       <td className="cell-num">{Number(sh.delivered_cost_per_litre || 0).toFixed(6)}</td>
@@ -765,8 +765,8 @@ function TimelineTab({ rows }) {
               <li key={h.id} className="d-flex items-start gap-3" style={{ padding: '0.5rem 0' }}>
                 <span className={`status-pill ${statusPill(h.to)}`}>{label(h.to)}</span>
                 <div className="flex-1">
-                  <div className="cell-name">{h.location || 'â€”'}</div>
-                  <div className="text-muted-soft" style={{ fontSize: '0.75rem' }}>{h.by || ''} Â· {h.at}</div>
+                  <div className="cell-name">{h.location || '—'}</div>
+                  <div className="text-muted-soft" style={{ fontSize: '0.75rem' }}>{h.by || ''} · {h.at}</div>
                   {h.comments && <div style={{ fontSize: '0.8125rem' }}>{h.comments}</div>}
                 </div>
               </li>
@@ -803,7 +803,7 @@ function TransitionModal({ shipment, transitions, onClose, onDone }) {
       show
       onClose={onClose}
       title="Update status"
-      subtitle={`${shipment.reference} Â· currently ${label(shipment.status)}`}
+      subtitle={`${shipment.reference} · currently ${label(shipment.status)}`}
       icon="bi-arrow-repeat"
       footer={
         <>

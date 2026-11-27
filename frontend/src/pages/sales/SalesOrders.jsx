@@ -1,4 +1,4 @@
-ï»¿/**
+/**
  * Sales orders.
  * - CRUD /sales-orders/ (withSubmit, nested lines)
  * - POST /sales-orders/:id/submit/
@@ -14,7 +14,7 @@ import { ServerPagination } from './Customers';
 
 const STATUSES = ['DRAFT', 'AWAITING_APPROVAL', 'APPROVED', 'IN_FULFILMENT', 'COMPLETED', 'CANCELLED'];
 const fmtMoney = (n, c = '') => {
-  if (n == null || n === '') return 'â€”';
+  if (n == null || n === '') return '—';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -68,7 +68,7 @@ export default function SalesOrders() {
     <div>
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-cart-check"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Sales orders</h1>
             <p className="page-subtitle">{activeCompanyObj ? activeCompanyObj.name : 'All entities'}</p>
@@ -180,7 +180,7 @@ export default function SalesOrders() {
                       </td>
                       <td className="cell-name">{so.customer_label || so.customer}</td>
                       <td>{so.order_date}</td>
-                      <td>{so.required_date || 'â€”'}</td>
+                      <td>{so.required_date || '—'}</td>
                       <td className="cell-num">{fmtMoney(so.total, so.currency)}</td>
                       <td><span className={`status-pill ${orderStatusPill(so.status)}`}>{so.status.replace('_', ' ')}</span></td>
                       <td>

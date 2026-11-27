@@ -1,8 +1,8 @@
-ï»¿/**
+/**
  * Third-party transporters.
  * - CRUD /transporters/
- * - GET /transporters/:id/performance/   â†’ bookings, deliveries, on-time, shortage, avg rate
- * - GET /transporters/:id/statement/     â†’ invoices vs payments running balance
+ * - GET /transporters/:id/performance/   ? bookings, deliveries, on-time, shortage, avg rate
+ * - GET /transporters/:id/statement/     ? invoices vs payments running balance
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth, useApp } from '../../context/AppContext';
@@ -14,7 +14,7 @@ import TableSkeleton from '../../components/TableSkeleton';
 
 const STATUS = ['ACTIVE', 'SUSPENDED', 'INACTIVE'];
 const fmtMoney = (n) => {
-  if (n == null || n === '') return 'â€”';
+  if (n == null || n === '') return '—';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
@@ -77,11 +77,11 @@ export default function Transporters() {
       {/* ---------- Page header: icon tile + title + actions ---------- */}
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-truck-flatbed"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Transporters</h1>
             <p className="page-subtitle">
-              Hired truck partners{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
+              Hired truck partners{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -190,8 +190,8 @@ export default function Transporters() {
                     <tr key={t.id}>
                       <td className="cell-mono text-brand fw-600">{t.code}</td>
                       <td className="cell-name">{t.name}</td>
-                      <td>{t.contact_person || 'â€”'}</td>
-                      <td>{t.phone || 'â€”'}</td>
+                      <td>{t.contact_person || '—'}</td>
+                      <td>{t.phone || '—'}</td>
                       <td className="cell-num">{fmtMoney(t.credit_limit)}</td>
                       <td className="cell-num">{t.payment_terms_days}</td>
                       <td><span className={`status-pill ${statusPill(t.status)}`}>{t.status}</span></td>
@@ -326,7 +326,7 @@ function TransporterModal({ row, companyParams, onClose, onSaved }) {
           </Field>
           <Field label="Currency">
             <select className="form-select" value={form.currency} onChange={set('currency')}>
-              <option value="">â€”</option>
+              <option value="">—</option>
               {currencies.map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
             </select>
           </Field>
@@ -341,18 +341,18 @@ function TransporterModal({ row, companyParams, onClose, onSaved }) {
 function PerformanceModal({ data, onClose }) {
   const { transporter, data: m } = data;
   const items = [
-    ['Bookings', m.bookings ?? 'â€”'],
-    ['Delivered shipments', m.delivered_shipments ?? 'â€”'],
-    ['Late deliveries', m.late_deliveries ?? 'â€”'],
-    ['On-time %', m.on_time_pct != null ? Number(m.on_time_pct).toFixed(2) : 'â€”'],
+    ['Bookings', m.bookings ?? '—'],
+    ['Delivered shipments', m.delivered_shipments ?? '—'],
+    ['Late deliveries', m.late_deliveries ?? '—'],
+    ['On-time %', m.on_time_pct != null ? Number(m.on_time_pct).toFixed(2) : '—'],
     ['Shortage (L)', Number(m.shortage_litres || 0).toLocaleString()],
-    ['Avg rate / L', m.avg_rate_per_litre != null ? Number(m.avg_rate_per_litre).toFixed(6) : 'â€”'],
+    ['Avg rate / L', m.avg_rate_per_litre != null ? Number(m.avg_rate_per_litre).toFixed(6) : '—'],
   ];
   return (
     <Modal
       show
       onClose={onClose}
-      title={`Performance Â· ${transporter.code}`}
+      title={`Performance · ${transporter.code}`}
       subtitle={transporter.name}
       icon="bi-bar-chart"
       footer={<button type="button" className="btn btn-secondary" onClick={onClose}>Close</button>}
@@ -376,7 +376,7 @@ function StatementModal({ data, onClose }) {
     <Modal
       show
       onClose={onClose}
-      title={`Statement Â· ${transporter.code}`}
+      title={`Statement · ${transporter.code}`}
       subtitle={transporter.name}
       icon="bi-file-text"
       size="xl"

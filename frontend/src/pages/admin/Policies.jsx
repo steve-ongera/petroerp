@@ -1,10 +1,10 @@
-ï»¿/**
+/**
  * Approval policies + number sequences.
- * - CRUD /approval-policies/  (company scoped) â†’ drives svc.required_role(company, doc_type, amount)
- * - CRUD /number-sequences/   (company scoped) â†’ drives svc.next_reference()
+ * - CRUD /approval-policies/  (company scoped) ? drives svc.required_role(company, doc_type, amount)
+ * - CRUD /number-sequences/   (company scoped) ? drives svc.next_reference()
  *
  * doc_type in ApprovalPolicy is the model class name (e.g. "PurchaseOrder", "Payment",
- * "Expense", "StockAdjustment") â€” matches keys in services.APPROVAL_FLOW.
+ * "Expense", "StockAdjustment") — matches keys in services.APPROVAL_FLOW.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
@@ -19,7 +19,7 @@ const TABS = [
   { key: 'sequences', label: 'Number sequences', icon: 'bi-123' },
 ];
 
-// Keys of services.APPROVAL_FLOW â€” these drive the workflow
+// Keys of services.APPROVAL_FLOW — these drive the workflow
 const DOC_TYPES = [
   'PurchaseRequisition', 'PurchaseOrder', 'SalesOrder', 'Expense',
   'Payment', 'TransportBooking', 'Shipment', 'StockAdjustment', 'ShipmentDelivery',
@@ -71,11 +71,11 @@ export default function Policies() {
       {/* ---------- Page header ---------- */}
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-shield-check"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Policies & numbering</h1>
             <p className="page-subtitle">
-              Approvals and reference sequences{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
+              Approvals and reference sequences{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -299,8 +299,8 @@ function PolicyModal({ row, roles, companyParams, onClose, onSaved }) {
           </Field>
           <Field label="Approver role" required err={fieldErr.approver_role} span>
             <select className="form-select" value={form.approver_role} onChange={set('approver_role')} required>
-              <option value="">â€”</option>
-              {roles.map((r) => <option key={r.id} value={r.id}>{r.code} Â· {r.name}</option>)}
+              <option value="">—</option>
+              {roles.map((r) => <option key={r.id} value={r.id}>{r.code} · {r.name}</option>)}
             </select>
           </Field>
         </div>

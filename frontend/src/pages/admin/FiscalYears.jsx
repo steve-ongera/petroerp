@@ -1,4 +1,4 @@
-ï»¿/**
+/**
  * Fiscal years + accounting periods.
  * - POST /fiscal-years/         create (needs finance.close_period via perm_map)
  * - POST /fiscal-years/:id/close -> svc.close_fiscal_year
@@ -66,11 +66,11 @@ export default function FiscalYears() {
       {/* ---------- Page header ---------- */}
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-calendar3"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Fiscal years</h1>
             <p className="page-subtitle">
-              Year-end closing and monthly accounting periods{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
+              Year-end closing and monthly accounting periods{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -120,7 +120,7 @@ export default function FiscalYears() {
           <div className="table-wrap__header">
             <span className="panel-title">
               <i className="bi bi-calendar-week text-brand"></i>
-              {selectedYear ? `Periods Â· ${selectedYear.name}` : 'Periods'}
+              {selectedYear ? `Periods · ${selectedYear.name}` : 'Periods'}
             </span>
             {selectedYear && (
               <span className="chart-card__subtitle">{yearPeriods.length} period{yearPeriods.length !== 1 ? 's' : ''}</span>

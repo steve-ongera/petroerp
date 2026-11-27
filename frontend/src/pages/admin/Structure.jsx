@@ -1,4 +1,4 @@
-ï»¿/**
+/**
  * Company structure: branches + departments.
  * - /branches/    crud   (Coded master record, company scoped)
  * - /departments/ crud   (Coded, has optional branch FK)
@@ -62,11 +62,11 @@ export default function Structure() {
       {/* ---------- Page header ---------- */}
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-diagram-2"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Structure</h1>
             <p className="page-subtitle">
-              Branches and departments{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
+              Branches and departments{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -192,7 +192,7 @@ function StructureTable({ kind, rows, searching, onEdit, onDelete }) {
                 <tr key={r.id}>
                   <td className="cell-mono text-brand fw-600">{r.code}</td>
                   <td className="cell-name">{r.name}</td>
-                  {isBranch ? <td>{r.address || 'â€”'}</td> : <td>{r.branch_label || 'â€”'}</td>}
+                  {isBranch ? <td>{r.address || '—'}</td> : <td>{r.branch_label || '—'}</td>}
                   {isBranch && (
                     <td>
                       <span className={`status-pill ${r.is_active ? 'status-pill--success' : 'status-pill--neutral'}`}>
@@ -284,8 +284,8 @@ function StructureModal({ kind, row, branches, companyParams, onClose, onSaved }
           ) : (
             <Field label="Branch" span>
               <select className="form-select" value={form.branch} onChange={set('branch')}>
-                <option value="">â€” none â€”</option>
-                {branches.map((b) => <option key={b.id} value={b.id}>{b.code} Â· {b.name}</option>)}
+                <option value="">— none —</option>
+                {branches.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
               </select>
             </Field>
           )}

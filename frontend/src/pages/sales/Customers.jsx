@@ -1,4 +1,4 @@
-ï»¿/**
+/**
  * Customers.
  * - CRUD /customers/       (crud)
  * - GET  /customers/:id/statement/
@@ -20,7 +20,7 @@ const STATUS = ['ACTIVE', 'ON_HOLD', 'BLOCKED', 'INACTIVE'];
 const PAGE_SIZE = 25;
 
 const fmtMoney = (n, c = '') => {
-  if (n == null || n === '') return 'â€”';
+  if (n == null || n === '') return '—';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -67,7 +67,7 @@ export default function Customers() {
     <div>
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-people"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Customers</h1>
             <p className="page-subtitle">{activeCompanyObj ? activeCompanyObj.name : 'All entities'}</p>
@@ -181,7 +181,7 @@ export default function Customers() {
                       <td className="cell-name">{c.name}</td>
                       <td>{c.country}</td>
                       <td className="cell-num">{fmtMoney(c.credit_limit, c.currency)}</td>
-                      <td>{c.payment_terms || 'â€”'}</td>
+                      <td>{c.payment_terms || '—'}</td>
                       <td>{c.credit_period_days} days</td>
                       <td><span className={`status-pill ${customerStatusPill(c.status)}`}>{c.status.replace('_', ' ')}</span></td>
                       <td>
@@ -292,7 +292,7 @@ export function CustomerModal({ row = {}, onClose, onSaved }) {
         <div className="form-grid">
           <Field label="Currency">
             <select className="form-select" value={form.currency} onChange={set('currency')}>
-              <option value="">â€”</option>
+              <option value="">—</option>
               {currencies.map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
             </select>
           </Field>
@@ -319,7 +319,7 @@ export function ServerPagination({ page, count, onChange, size = PAGE_SIZE }) {
   if (count <= size) return null;
   return (
     <div className="pagination pagination--bordered">
-      <span className="pagination__info">Page <strong>{page}</strong> of <strong>{pages}</strong> Â· {count} items</span>
+      <span className="pagination__info">Page <strong>{page}</strong> of <strong>{pages}</strong> · {count} items</span>
       <div className="pagination__list">
         <button className="pagination__btn" disabled={page <= 1} onClick={() => onChange(page - 1)}>Prev</button>
         <button className="pagination__btn active">{page}</button>

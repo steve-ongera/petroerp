@@ -1,4 +1,4 @@
-ï»¿/**
+/**
  * Vehicle maintenance.
  * - CRUD /vehicle-maintenance/
  */
@@ -13,7 +13,7 @@ import TableSkeleton from '../../components/TableSkeleton';
 const TYPES = ['SERVICE', 'REPAIR', 'TYRES', 'INSPECTION', 'INSURANCE', 'OTHER'];
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtMoney = (n) => {
-  if (n == null || n === '') return 'â€”';
+  if (n == null || n === '') return '—';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
@@ -68,11 +68,11 @@ export default function Maintenance() {
     <div>
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-tools"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Maintenance</h1>
             <p className="page-subtitle">
-              Service, repairs and inspections{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
+              Service, repairs and inspections{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -182,11 +182,11 @@ export default function Maintenance() {
                       <td>{m.maintenance_date}</td>
                       <td className="cell-mono text-brand fw-600">{m.vehicle_label || m.vehicle}</td>
                       <td><span className="badge badge-neutral">{m.maintenance_type}</span></td>
-                      <td className="text-truncate" style={{ maxWidth: 260 }}>{m.description || 'â€”'}</td>
+                      <td className="text-truncate" style={{ maxWidth: 260 }}>{m.description || '—'}</td>
                       <td className="cell-num">{fmtMoney(m.cost)}</td>
                       <td className="cell-num">{Number(m.odometer_km || 0).toLocaleString()}</td>
-                      <td>{m.next_due_date || 'â€”'}</td>
-                      <td>{m.vendor || 'â€”'}</td>
+                      <td>{m.next_due_date || '—'}</td>
+                      <td>{m.vendor || '—'}</td>
                       <td>
                         {can('fleet.edit') && (
                           <div className="row-actions">
@@ -271,7 +271,7 @@ function MaintenanceModal({ row, vehicles, companyParams, onClose, onSaved }) {
         <div className="form-grid">
           <Field label="Vehicle" required err={fieldErr.vehicle}>
             <select className="form-select" value={form.vehicle} onChange={set('vehicle')} required>
-              <option value="">â€”</option>
+              <option value="">—</option>
               {vehicles.map((v) => <option key={v.id} value={v.id}>{v.registration_number}</option>)}
             </select>
           </Field>

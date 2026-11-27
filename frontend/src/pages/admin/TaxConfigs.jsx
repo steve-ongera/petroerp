@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Tax / levy / duty configuration.
  * - CRUD  /tax-configs/            crud('tax-configs')
  * - POST  /tax-configs/:id/verify  Professional verification (different user, server-enforced)
@@ -74,11 +74,11 @@ export default function TaxConfigs() {
       {/* ---------- Page header ---------- */}
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-percent"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Tax configuration</h1>
             <p className="page-subtitle">
-              Effective-dated, professionally verified rates{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
+              Effective-dated, professionally verified rates{activeCompanyObj ? ` � ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -199,7 +199,7 @@ export default function TaxConfigs() {
                         <td className="cell-name">{t.name}</td>
                         <td><span className="badge badge-neutral">{t.tax_type}</span></td>
                         <td className="cell-num">{Number(t.rate_percent).toFixed(3)}</td>
-                        <td>{t.effective_from}{t.effective_to ? ` → ${t.effective_to}` : ' →'}</td>
+                        <td>{t.effective_from}{t.effective_to ? ` ? ${t.effective_to}` : ' ?'}</td>
                         <td>
                           <span
                             className={`status-pill ${verified(t) ? 'status-pill--success' : 'status-pill--warning'}`}

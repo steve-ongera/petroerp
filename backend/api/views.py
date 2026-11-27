@@ -242,13 +242,35 @@ def route(prefix):
 
 
 # ====================================================================== auth
+PURCHASE_POST_ROLES = ('OPERATIONS_MANAGER',) + svc.FINANCE_POST_ROLES   # + both finance managers, accountant
+# To override a failed match, a user must be able to post AND be in services' override list.
+PURCHASE_OVERRIDE_ROLES = tuple(r for r in PURCHASE_POST_ROLES if r in svc.MATCH_OVERRIDE_ROLES)
+
+
+def role_list(codes):
+    names = ['Group Administrator'] + [svc.ROLE_NAMES.get(c, c.replace('_', ' ').title()) for c in codes]
+    return ', '.join(names)
+
+
+def user_role_name(user):
+    if user.role_id:
+        return user.role.name
+    return 'Superuser' if user.is_superuser else 'No role assigned'
+
+
 def me_payload(u):
     return {'id': u.id, 'username': u.username, 'name': u.get_full_name() or u.username, 'email': u.email,
             'role': u.role.code if u.role_id else ('SUPERUSER' if u.is_superuser else None),
-            'role_name': u.role.name if u.role_id else None, 'mfa_enabled': bool(u.mfa_secret),
+            'role_name': u.role.name if u.role_id else None, 'role_label': user_role_name(u),
+            'mfa_enabled': bool(u.mfa_secret),
+            'purchase_posting': {
+                'can_post': svc.has_role(u, PURCHASE_POST_ROLES),
+                'can_override': svc.has_role(u, PURCHASE_OVERRIDE_ROLES),
+                'post_roles': role_list(PURCHASE_POST_ROLES),
+                'override_roles': role_list(PURCHASE_OVERRIDE_ROLES),
+            },
             'companies': [{'id': c.id, 'code': c.code, 'name': c.name, 'country': c.country, 'currency': c.functional_currency_id}
                           for c in m.Company.objects.filter(id__in=u.allowed_company_ids())]}
-
 
 class LoginSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
@@ -493,9 +515,19 @@ class PurchaseInvoiceViewSet(make_viewset(m.PurchaseInvoice, filters_=('supplier
 
     @action(detail=True, methods=['post'])
     def post(self, request, pk=None):
+        u = request.user
+        if not svc.has_role(u, PURCHASE_POST_ROLES):
+            raise PermissionDenied(
+                f'Your role is "{user_role_name(u)}". You cannot post purchase invoices. '
+                f'Only these can post: {role_list(PURCHASE_POST_ROLES)}.')
         d = sz.PostInvoiceIn(data=request.data)
         d.is_valid(raise_exception=True)
-        inv = svc.post_purchase_invoice(self.get_object(), request.user, d.validated_data['override'])
+        override = d.validated_data['override']
+        if override and not svc.has_role(u, PURCHASE_OVERRIDE_ROLES):
+            raise PermissionDenied(
+                f'Your role is "{user_role_name(u)}". You cannot override a failed three-way match. '
+                f'Only these can: {role_list(PURCHASE_OVERRIDE_ROLES)}.')
+        inv = svc.post_purchase_invoice(self.get_object(), u, override)
         return Response(sz.serializer_for(m.PurchaseInvoice)(inv).data)
 
 

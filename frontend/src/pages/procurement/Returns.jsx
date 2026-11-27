@@ -1,7 +1,7 @@
-ï»¿/**
+/**
  * Purchase returns.
  * - POST /purchase-returns/  { goods_receipt, quantity, return_date?, reason? }
- * - GET  /goods-receipts/ (picker)  â†’ GRN to return against
+ * - GET  /goods-receipts/ (picker)  ? GRN to return against
  * - GET  /purchase-returns/ (readOnly list)
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -14,7 +14,7 @@ import TableSkeleton from '../../components/TableSkeleton';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtMoney = (n) => {
-  if (n == null || n === '') return 'â€”';
+  if (n == null || n === '') return '—';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
@@ -59,11 +59,11 @@ export default function Returns() {
     <div>
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-arrow-return-left"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Purchase returns</h1>
             <p className="page-subtitle">
-              Return goods to supplier{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
+              Return goods to supplier{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -156,7 +156,7 @@ export default function Returns() {
                       <td className="cell-mono">{r.goods_receipt_label || r.goods_receipt}</td>
                       <td className="cell-num">{Number(r.quantity).toLocaleString()}</td>
                       <td className="cell-num">{fmtMoney(r.value)}</td>
-                      <td className="text-truncate" style={{ maxWidth: 260 }}>{r.reason || 'â€”'}</td>
+                      <td className="text-truncate" style={{ maxWidth: 260 }}>{r.reason || '—'}</td>
                       <td><span className="status-pill status-pill--info">{r.status}</span></td>
                     </tr>
                   ))}
@@ -220,10 +220,10 @@ function ReturnModal({ grns, onClose, onDone }) {
         <div className="form-grid">
           <Field label="Goods receipt" required err={fieldErr.goods_receipt} span>
             <select className="form-select" value={form.goods_receipt} onChange={set('goods_receipt')} required>
-              <option value="">â€”</option>
+              <option value="">—</option>
               {grns.map((g) => (
                 <option key={g.id} value={g.id}>
-                  {g.reference} Â· {Number(g.quantity).toLocaleString()} L Â· {g.receipt_date}
+                  {g.reference} · {Number(g.quantity).toLocaleString()} L · {g.receipt_date}
                 </option>
               ))}
             </select>

@@ -1,4 +1,4 @@
-ï»¿/**
+/**
  * Purchase requisitions.
  * - CRUD /purchase-requisitions/
  * - POST /purchase-requisitions/:id/submit/  -> approval workflow
@@ -68,7 +68,7 @@ export default function Requisitions() {
     <div>
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-clipboard-check"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Purchase requisitions</h1>
             <p className="page-subtitle">{activeCompanyObj ? activeCompanyObj.name : 'All entities'}</p>
@@ -145,8 +145,8 @@ export default function Requisitions() {
                       <td className="cell-mono fw-600">{r.reference}</td>
                       <td className="cell-name">{r.product_label || r.product}</td>
                       <td className="cell-num">{Number(r.quantity || 0).toLocaleString()}</td>
-                      <td>{r.required_date || 'â€”'}</td>
-                      <td className="text-truncate" style={{ maxWidth: 300 }}>{r.reason || 'â€”'}</td>
+                      <td>{r.required_date || '—'}</td>
+                      <td className="text-truncate" style={{ maxWidth: 300 }}>{r.reason || '—'}</td>
                       <td><span className={`status-pill ${statusPill(r.status)}`}>{r.status}</span></td>
                       <td>
                         <div className="row-actions">
@@ -233,15 +233,15 @@ function RequisitionModal({ row, products, companies = [], companyParams, onClos
           {isNew && companies.length > 1 && (
             <Field label="Legal entity" required err={fieldErr.company}>
               <select className="form-select" value={form.company} onChange={set('company')} required>
-                <option value="">â€”</option>
-                {companies.map((c) => <option key={c.id} value={c.id}>{c.code} Â· {c.name}</option>)}
+                <option value="">—</option>
+                {companies.map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}
               </select>
             </Field>
           )}
           <Field label="Product" required err={fieldErr.product}>
             <select className="form-select" value={form.product} onChange={set('product')} required>
-              <option value="">â€”</option>
-              {products.map((p) => <option key={p.id} value={p.id}>{p.code} Â· {p.name}</option>)}
+              <option value="">—</option>
+              {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
             </select>
           </Field>
           <Field label="Quantity (litres)" required err={fieldErr.quantity}>

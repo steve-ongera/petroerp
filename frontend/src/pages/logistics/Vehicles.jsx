@@ -1,5 +1,5 @@
-ï»¿/**
- * Owned fleet â€” vehicles.
+/**
+ * Owned fleet — vehicles.
  * - CRUD /vehicles/
  * - POST /vehicles/:id/log-expense/  (Expense + VehicleExpense in one shot)
  * - GET  /vehicles/:id/metrics/?date_from=&date_to=
@@ -17,7 +17,7 @@ const OWNERSHIP = ['OWNED', 'LEASED'];
 const EXPENSE_TYPES = ['FUEL', 'ALLOWANCE', 'ROAD', 'PARKING', 'REPAIR', 'TYRES', 'OTHER'];
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtMoney = (n) => {
-  if (n == null || n === '') return 'â€”';
+  if (n == null || n === '') return '—';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
@@ -71,11 +71,11 @@ export default function Vehicles() {
       {/* ---------- Page header: icon tile + title + actions ---------- */}
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-truck"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Vehicles</h1>
             <p className="page-subtitle">
-              Owned and leased fleet{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
+              Owned and leased fleet{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -185,11 +185,11 @@ export default function Vehicles() {
                     <tr key={v.id}>
                       <td className="cell-mono text-brand fw-600">{v.registration_number}</td>
                       <td className="cell-name">{v.make} {v.model}</td>
-                      <td>{v.truck_type || 'â€”'}</td>
+                      <td>{v.truck_type || '—'}</td>
                       <td className="cell-num">{Number(v.tank_capacity || 0).toLocaleString()}</td>
                       <td><span className="badge badge-neutral">{v.ownership}</span></td>
-                      <td>{v.insurance_expiry || 'â€”'}</td>
-                      <td>{v.inspection_expiry || 'â€”'}</td>
+                      <td>{v.insurance_expiry || '—'}</td>
+                      <td>{v.inspection_expiry || '—'}</td>
                       <td>
                         <span className={`status-pill ${statusPill(v.status)}`}>{v.status.replace('_', ' ')}</span>
                       </td>
@@ -398,8 +398,8 @@ function LogExpenseModal({ vehicle, companyParams, onClose, onDone }) {
         <div className="form-grid">
           <Field label="Category" required err={fieldErr.category}>
             <select className="form-select" value={form.category} onChange={set('category')} required>
-              <option value="">â€”</option>
-              {categories.map((c) => <option key={c.id} value={c.id}>{c.code} Â· {c.name}</option>)}
+              <option value="">—</option>
+              {categories.map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}
             </select>
           </Field>
           <Field label="Type" required>
@@ -431,7 +431,7 @@ function LogExpenseModal({ vehicle, companyParams, onClose, onDone }) {
           {form.payment_method !== 'CREDIT' && form.payment_method !== 'CASH' && (
             <Field label="Bank account">
               <select className="form-select" value={form.bank_account} onChange={set('bank_account')}>
-                <option value="">â€”</option>
+                <option value="">—</option>
                 {bankAccounts.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
             </Field>
@@ -453,7 +453,7 @@ function LogExpenseModal({ vehicle, companyParams, onClose, onDone }) {
 function MetricsModal({ vehicle, data, onClose }) {
   const money = (n) => Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2 });
   const items = data && Object.keys(data).length ? [
-    ['Trips', data.trips ?? 'â€”'],
+    ['Trips', data.trips ?? '—'],
     ['Distance (km)', Number(data.km || 0).toLocaleString()],
     ['Operating cost', money(data.operating_cost)],
     ['Cost / km', Number(data.cost_per_km || 0).toFixed(4)],
@@ -467,7 +467,7 @@ function MetricsModal({ vehicle, data, onClose }) {
     <Modal
       show
       onClose={onClose}
-      title={`Metrics Â· ${vehicle.registration_number}`}
+      title={`Metrics · ${vehicle.registration_number}`}
       subtitle={`${vehicle.make} ${vehicle.model}`}
       icon="bi-bar-chart"
       footer={<button type="button" className="btn btn-secondary" onClick={onClose}>Close</button>}

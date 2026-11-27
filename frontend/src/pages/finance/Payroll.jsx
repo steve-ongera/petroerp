@@ -1,6 +1,6 @@
-﻿/**
+/**
  * Payroll.
- * - CRUD /payroll-runs/            (DRAFT → POSTED via process)
+ * - CRUD /payroll-runs/            (DRAFT ? POSTED via process)
  * - POST /payroll-runs/:id/process/ { overtime: { employeeId: amount } } (needs finance.post)
  * - GET  /payroll-runs/:id/payslips/
  * - /payroll-configs/, /employees/ (crud)
@@ -16,7 +16,7 @@ import TableSkeleton from '../../components/TableSkeleton';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtMoney = (n) => {
-  if (n == null || n === '') return '—';
+  if (n == null || n === '') return '�';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
@@ -61,11 +61,11 @@ export default function Payroll() {
       {/* ---------- Page header ---------- */}
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-people-fill"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Payroll</h1>
             <p className="page-subtitle">
-              {activeCompanyObj ? activeCompanyObj.name : 'All entities'} · {rows.length} run{rows.length !== 1 ? 's' : ''}
+              {activeCompanyObj ? activeCompanyObj.name : 'All entities'} � {rows.length} run{rows.length !== 1 ? 's' : ''}
             </p>
           </div>
         </div>
@@ -136,7 +136,7 @@ export default function Payroll() {
                   {pageRows.map((r) => (
                     <tr key={r.id}>
                       <td className="cell-mono text-brand fw-600">{r.reference}</td>
-                      <td>{r.period_start} → {r.period_end}</td>
+                      <td>{r.period_start} ? {r.period_end}</td>
                       <td className="cell-num">{fmtMoney(r.total_gross)}</td>
                       <td className="cell-num">{fmtMoney(r.total_deductions)}</td>
                       <td className="cell-num">{fmtMoney(r.total_net)}</td>
@@ -233,7 +233,7 @@ function PayslipsModal({ run, rows, onClose }) {
     <Modal
       show
       onClose={onClose}
-      title={`Payslips · ${run.reference}`}
+      title={`Payslips � ${run.reference}`}
       subtitle={`${rows.length} employee${rows.length !== 1 ? 's' : ''}`}
       icon="bi-file-earmark-text"
       size="xl"

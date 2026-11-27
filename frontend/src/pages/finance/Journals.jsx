@@ -1,10 +1,10 @@
-ï»¿/**
+/**
  * General ledger journals.
  * - GET /journals/          readOnly posted journals (with lines)
  * - POST /journals/manual/  { company, date, description, lines: [{account, debit, credit, narration?, shipment?}] }
  * - POST /journals/:id/reverse/ { reason?, date? }
  *
- * Posted journals are immutable â€” corrections are reversing entries.
+ * Posted journals are immutable — corrections are reversing entries.
  * Paging is server-side (50 per page).
  */
 import { useCallback, useEffect, useState } from 'react';
@@ -19,7 +19,7 @@ import TableSkeleton from '../../components/TableSkeleton';
 const PAGE_SIZE = 50;
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtMoney = (n) => {
-  if (n == null || n === '') return 'â€”';
+  if (n == null || n === '') return '—';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
@@ -68,11 +68,11 @@ export default function Journals() {
       {/* ---------- Page header ---------- */}
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-journal-text"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Journals</h1>
             <p className="page-subtitle">
-              Posted general-ledger entries{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
+              Posted general-ledger entries{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -172,7 +172,7 @@ export default function Journals() {
                       <td className="cell-mono text-brand fw-600">{j.reference}</td>
                       <td>{j.date}</td>
                       <td className="cell-name" style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.description}</td>
-                      <td>{j.source_type || 'â€”'}</td>
+                      <td>{j.source_type || '—'}</td>
                       <td className="cell-num">{fmtMoney(j.total_debit)}</td>
                       <td className="cell-num">{fmtMoney(j.total_credit)}</td>
                       <td><span className={pill(j.status)}>{j.status}</span></td>
@@ -252,8 +252,8 @@ function JournalDetail({ journal, canReverse, onClose, onReversed }) {
       <div className="kv">
         <div className="kv__item"><div className="kv__label">Date</div><div className="kv__value">{journal.date}</div></div>
         <div className="kv__item"><div className="kv__label">Period</div><div className="kv__value">{journal.period_label || journal.period}</div></div>
-        <div className="kv__item"><div className="kv__label">Source</div><div className="kv__value">{journal.source_type || 'â€”'}</div></div>
-        <div className="kv__item"><div className="kv__label">Posted by</div><div className="kv__value">{journal.posted_by_label || 'â€”'}</div></div>
+        <div className="kv__item"><div className="kv__label">Source</div><div className="kv__value">{journal.source_type || '—'}</div></div>
+        <div className="kv__item"><div className="kv__label">Posted by</div><div className="kv__value">{journal.posted_by_label || '—'}</div></div>
         <div className="kv__item"><div className="kv__label">Status</div><div className="kv__value"><span className={pill(journal.status)}>{journal.status}</span></div></div>
       </div>
 
@@ -268,7 +268,7 @@ function JournalDetail({ journal, canReverse, onClose, onReversed }) {
               {lines.map((l) => (
                 <tr key={l.id}>
                   <td className="cell-mono text-brand fw-600">{l.account_code || l.account_label || l.account}</td>
-                  <td>{l.narration || 'â€”'}</td>
+                  <td>{l.narration || '—'}</td>
                   <td className="cell-num">{fmtMoney(l.debit)}</td>
                   <td className="cell-num">{fmtMoney(l.credit)}</td>
                 </tr>
@@ -381,8 +381,8 @@ function ManualJournalModal({ companyParams, onClose, onSaved }) {
                   <tr key={i}>
                     <td>
                       <select className="form-select" value={l.account} onChange={(e) => setLine(i, 'account', e.target.value)}>
-                        <option value="">â€”</option>
-                        {accounts.map((a) => <option key={a.id} value={a.id}>{a.code} Â· {a.name}</option>)}
+                        <option value="">—</option>
+                        {accounts.map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}
                       </select>
                     </td>
                     <td><input className="form-control" value={l.narration} onChange={(e) => setLine(i, 'narration', e.target.value)} /></td>
@@ -416,7 +416,7 @@ function ManualJournalModal({ companyParams, onClose, onSaved }) {
 
         <div className={`alert ${balanced ? 'alert-success' : 'alert-warning'} mt-3`} role="status">
           Difference: <strong>{fmtMoney(totalD - totalC)}</strong>
-          {balanced ? ' Â· balanced' : ' Â· debits and credits must match'}
+          {balanced ? ' · balanced' : ' · debits and credits must match'}
         </div>
         {error && <div className="alert alert-danger mt-3" role="alert">{error}</div>}
       </form>

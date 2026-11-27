@@ -1,5 +1,5 @@
-ï»¿/**
- * Purchase order detail â€” header, lines, actions.
+/**
+ * Purchase order detail — header, lines, actions.
  * Endpoints:
  *   /purchase-orders/:id/             (detail + lines, PUT while DRAFT)
  *   /purchase-orders/:id/submit/
@@ -10,7 +10,7 @@
  *   /approvals/?doc_type=PurchaseOrder&status=PENDING   (finds the pending request while AWAITING_APPROVAL)
  *   /approvals/:id/approve/  /approvals/:id/reject/     { comment }
  *
- * Route can be either .../purchase-orders/:id or .../purchase-orders/new â†’ if no id, show create form.
+ * Route can be either .../purchase-orders/:id or .../purchase-orders/new ? if no id, show create form.
  *
  * The same form (POForm) is used to create a PO and to edit one that is still DRAFT.
  * On create, an APPROVED requisition can be picked: its company, product, quantity and required date
@@ -28,7 +28,7 @@ import { SectionHeader, SectionBody, KV, EmptyState } from '../../components/Pag
 import { poStatusPill } from './PurchaseOrders';
 
 const fmtMoney = (n, c = '') => {
-  if (n == null || n === '') return 'â€”';
+  if (n == null || n === '') return '—';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -195,9 +195,7 @@ function POForm({ po, onSaved, onCancel }) {
     <div>
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true">
-            <i className={`bi ${isEdit ? 'bi-pencil-square' : 'bi-bag-plus'}`}></i>
-          </span>
+          
           <div className="page-header__text">
             <h1 className="page-title">{isEdit ? `Edit ${po.reference}` : 'New purchase order'}</h1>
             <p className="page-subtitle">
@@ -234,11 +232,11 @@ function POForm({ po, onSaved, onCancel }) {
                 <Field label="Approved requisition" err={fieldErr.requisition} span>
                   <>
                     <select className="form-select" value={requisition} onChange={(e) => pickRequisition(e.target.value)}>
-                      <option value="">â€” None (enter the order manually) â€”</option>
+                      <option value="">— None (enter the order manually) —</option>
                       {requisitions.map((r) => (
                         <option key={r.id} value={r.id}>
-                          {r.reference} Â· {r.product_label || r.product} Â· {Number(r.quantity).toLocaleString()} L
-                          {r.required_date ? ` Â· needed ${r.required_date}` : ''}
+                          {r.reference} · {r.product_label || r.product} · {Number(r.quantity).toLocaleString()} L
+                          {r.required_date ? ` · needed ${r.required_date}` : ''}
                         </option>
                       ))}
                     </select>
@@ -267,15 +265,15 @@ function POForm({ po, onSaved, onCancel }) {
               )}
               <Field label="Company" required err={fieldErr.company}>
                 <select className="form-select" value={company} onChange={(e) => changeCompany(e.target.value)} required disabled={isEdit}>
-                  <option value="">â€”</option>
-                  {myCompanies.map((c) => <option key={c.id} value={c.id}>{c.code} Â· {c.name}</option>)}
+                  <option value="">—</option>
+                  {myCompanies.map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}
                 </select>
               </Field>
               <Field label="Supplier" required err={fieldErr.supplier}>
                 <select className="form-select" value={form.supplier} onChange={set('supplier')} required disabled={!company}>
-                  <option value="">â€”</option>
+                  <option value="">—</option>
                   {supplierMissing && <option value={form.supplier}>{po.supplier_label || form.supplier}</option>}
-                  {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} Â· {s.name}</option>)}
+                  {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}
                 </select>
               </Field>
               <Field label="Order date" required err={fieldErr.order_date}>
@@ -286,9 +284,9 @@ function POForm({ po, onSaved, onCancel }) {
               </Field>
               <Field label="Loading depot" err={fieldErr.loading_depot}>
                 <select className="form-select" value={form.loading_depot} onChange={set('loading_depot')} disabled={!company}>
-                  <option value="">â€”</option>
+                  <option value="">—</option>
                   {depotMissing && <option value={form.loading_depot}>{po.loading_depot_label || form.loading_depot}</option>}
-                  {depots.map((d) => <option key={d.id} value={d.id}>{d.code} Â· {d.name}</option>)}
+                  {depots.map((d) => <option key={d.id} value={d.id}>{d.code} · {d.name}</option>)}
                 </select>
               </Field>
               <Field label="Delivery location" err={fieldErr.delivery_location}>
@@ -330,8 +328,8 @@ function POForm({ po, onSaved, onCancel }) {
                     <tr key={i}>
                       <td>
                         <select className="form-select" value={l.product} onChange={(e) => setLine(i, 'product', e.target.value)}>
-                          <option value="">â€”</option>
-                          {products.map((p) => <option key={p.id} value={p.id}>{p.code} Â· {p.name}</option>)}
+                          <option value="">—</option>
+                          {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
                         </select>
                       </td>
                       <td><input type="number" step="0.001" className="form-control num" value={l.quantity} onChange={(e) => setLine(i, 'quantity', e.target.value)} /></td>
@@ -456,14 +454,14 @@ function EditPO({ id }) {
     <div>
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-bag-check"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">
               {po.reference}{' '}
               <span className={`status-pill ${poStatusPill(po.status)}`}>{po.status.replace(/_/g, ' ')}</span>
             </h1>
             <p className="page-subtitle">
-              {po.supplier_label || po.supplier} Â· {fmtMoney(po.total, po.currency)}
+              {po.supplier_label || po.supplier} · {fmtMoney(po.total, po.currency)}
             </p>
           </div>
         </div>
@@ -517,14 +515,14 @@ function EditPO({ id }) {
           <KV items={[
             ['Company', po.company_label || po.company],
             ['Supplier', po.supplier_label || po.supplier],
-            ['Requisition', po.requisition_label || 'â€”'],
+            ['Requisition', po.requisition_label || '—'],
             ['Order date', po.order_date],
-            ['Expected loading', po.expected_loading_date || 'â€”'],
-            ['Loading depot', po.loading_depot_label || 'â€”'],
+            ['Expected loading', po.expected_loading_date || '—'],
+            ['Loading depot', po.loading_depot_label || '—'],
             ['Currency', po.currency || 'functional'],
-            ['Exchange rate', po.exchange_rate || 'â€”'],
+            ['Exchange rate', po.exchange_rate || '—'],
             ['Payment terms', `${po.payment_terms_days} days`],
-            ['Delivery location', po.delivery_location || 'â€”'],
+            ['Delivery location', po.delivery_location || '—'],
           ]} />
         </SectionBody>
       </section>
@@ -555,7 +553,7 @@ function EditPO({ id }) {
                       <td className="cell-num">{Number(l.received_quantity || 0).toLocaleString()}</td>
                       <td className="cell-num">{Number(l.unit_price).toFixed(6)}</td>
                       <td className="cell-num">{fmtMoney(l.line_total)}</td>
-                      <td>{l.tax_code || 'â€”'}</td>
+                      <td>{l.tax_code || '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -621,7 +619,7 @@ function DecisionModal({ po, approving, onClose, onSubmit }) {
     >
       <form id="decisionForm" onSubmit={submit}>
         <p className="mb-3">
-          {po.supplier_label || po.supplier} Â· {fmtMoney(po.total, po.currency)}
+          {po.supplier_label || po.supplier} · {fmtMoney(po.total, po.currency)}
         </p>
         <Field label={approving ? 'Comment (optional)' : 'Reason for rejection'} required={!approving}>
           <textarea
@@ -690,18 +688,18 @@ function ReceiveModal({ po, line, onClose, onDone }) {
         <div className="form-grid">
           <Field label="Line" required err={fieldErr.line} span>
             <select className="form-select" value={form.line} onChange={set('line')} required>
-              <option value="">â€”</option>
+              <option value="">—</option>
               {(po.lines || []).map((l) => (
                 <option key={l.id} value={l.id}>
-                  {l.product_label || l.product} Â· ordered {Number(l.quantity).toLocaleString()} Â· received {Number(l.received_quantity || 0).toLocaleString()}
+                  {l.product_label || l.product} · ordered {Number(l.quantity).toLocaleString()} · received {Number(l.received_quantity || 0).toLocaleString()}
                 </option>
               ))}
             </select>
           </Field>
           <Field label="Tank" required err={fieldErr.tank}>
             <select className="form-select" value={form.tank} onChange={set('tank')} required>
-              <option value="">â€”</option>
-              {tanks.map((t) => <option key={t.id} value={t.id}>{t.code} Â· {t.name}</option>)}
+              <option value="">—</option>
+              {tanks.map((t) => <option key={t.id} value={t.id}>{t.code} · {t.name}</option>)}
             </select>
           </Field>
           <Field label="Receipt date" required>
@@ -723,7 +721,7 @@ function ReceiveModal({ po, line, onClose, onDone }) {
           <Field label="Standardized volume (L)">
             <input type="number" step="0.001" className="form-control num" value={form.standardized_volume} onChange={set('standardized_volume')} />
           </Field>
-          <Field label="Temperature (Â°C)">
+          <Field label="Temperature (°C)">
             <input type="number" step="0.01" className="form-control num" value={form.temperature_c} onChange={set('temperature_c')} />
           </Field>
           <Field label="Density">
@@ -731,7 +729,7 @@ function ReceiveModal({ po, line, onClose, onDone }) {
           </Field>
         </div>
         <p className="text-muted-soft mt-3" style={{ fontSize: '0.8125rem' }}>
-          Stock will move into the tank at the PO unit price Ã— exchange rate. GRNI is credited until the invoice is posted.
+          Stock will move into the tank at the PO unit price × exchange rate. GRNI is credited until the invoice is posted.
         </p>
 
         {error && <div className="alert alert-danger mt-3" role="alert">{error}</div>}

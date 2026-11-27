@@ -1,4 +1,4 @@
-ï»¿/**
+/**
  * Users.
  * - /users/   crud (plain + create/update/patch/remove)
  * - UserSerializer: password write-only, companies M2M, role FK.
@@ -60,7 +60,7 @@ export default function Users() {
       {/* ---------- Page header ---------- */}
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-people"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Users</h1>
             <p className="page-subtitle">Accounts, roles and legal-entity access</p>
@@ -171,10 +171,10 @@ export default function Users() {
                         {u.id === me?.id && <span className="badge badge-neutral" style={{ marginLeft: 8 }}>you</span>}
                       </td>
                       <td className="cell-name">
-                        {[u.first_name, u.last_name].filter(Boolean).join(' ') || 'â€”'}
+                        {[u.first_name, u.last_name].filter(Boolean).join(' ') || '—'}
                         {u.email && <div className="text-muted-soft" style={{ fontSize: '0.8rem' }}>{u.email}</div>}
                       </td>
-                      <td>{u.role_name || u.role || 'â€”'}</td>
+                      <td>{u.role_name || u.role || '—'}</td>
                       <td className="cell-num">{(u.companies || []).length}</td>
                       <td>
                         <span className={`status-pill ${u.is_active ? 'status-pill--success' : 'status-pill--neutral'}`}>
@@ -291,8 +291,8 @@ function UserModal({ row, roles, companies, onClose, onSaved }) {
           </Field>
           <Field label="Role" err={fieldErr.role}>
             <select className="form-select" value={form.role} onChange={set('role')}>
-              <option value="">â€” none â€”</option>
-              {roles.map((r) => <option key={r.id} value={r.id}>{r.code} Â· {r.name}</option>)}
+              <option value="">— none —</option>
+              {roles.map((r) => <option key={r.id} value={r.id}>{r.code} · {r.name}</option>)}
             </select>
           </Field>
           <Field label={isNew ? 'Password' : 'Reset password'} err={fieldErr.password} span>
@@ -315,7 +315,7 @@ function UserModal({ row, roles, companies, onClose, onSaved }) {
                     className="form-check-input" type="checkbox" id={`co-${c.id}`}
                     checked={hasCompany(c.id)} onChange={() => toggleCompany(c.id)}
                   />
-                  <label className="form-check-label" htmlFor={`co-${c.id}`}>{c.code} Â· {c.name}</label>
+                  <label className="form-check-label" htmlFor={`co-${c.id}`}>{c.code} · {c.name}</label>
                 </div>
               ))}
             </div>

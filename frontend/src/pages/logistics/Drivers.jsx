@@ -1,4 +1,4 @@
-ï»¿/**
+/**
  * Drivers.
  * - CRUD /drivers/
  * Fields: full_name, id_number, licence_number, licence_category, licence_expiry, phone, employment_status
@@ -59,11 +59,11 @@ export default function Drivers() {
     <div>
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-person-badge"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Drivers</h1>
             <p className="page-subtitle">
-              Licenced drivers{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
+              Licenced drivers{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -170,11 +170,11 @@ export default function Drivers() {
                   {pageRows.map((d) => (
                     <tr key={d.id}>
                       <td className="cell-name">{d.full_name}</td>
-                      <td className="cell-mono">{d.id_number || 'â€”'}</td>
-                      <td className="cell-mono text-brand fw-600">{d.licence_number || 'â€”'}</td>
-                      <td>{d.licence_category || 'â€”'}</td>
-                      <td>{d.licence_expiry || 'â€”'}</td>
-                      <td>{d.phone || 'â€”'}</td>
+                      <td className="cell-mono">{d.id_number || '—'}</td>
+                      <td className="cell-mono text-brand fw-600">{d.licence_number || '—'}</td>
+                      <td>{d.licence_category || '—'}</td>
+                      <td>{d.licence_expiry || '—'}</td>
+                      <td>{d.phone || '—'}</td>
                       <td>
                         <span className={`status-pill ${statusPill(d.employment_status)}`}>{d.employment_status}</span>
                       </td>

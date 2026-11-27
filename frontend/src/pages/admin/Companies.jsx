@@ -1,4 +1,4 @@
-ï»¿/**
+/**
  * Legal entities (companies).
  * - GET/POST/PATCH/DELETE /companies/   (crud('companies'))
  * - Only the Group Administrator can create (enforced server-side).
@@ -65,7 +65,7 @@ export default function Companies() {
       {/* ---------- Page header ---------- */}
       <div className="page-header">
         <div className="page-header__lead">
-          <span className="page-header__icon" aria-hidden="true"><i className="bi bi-buildings"></i></span>
+          
           <div className="page-header__text">
             <h1 className="page-title">Legal entities</h1>
             <p className="page-subtitle">Companies in the group</p>
@@ -273,8 +273,8 @@ function CompanyModal({ company, currencies, onClose, onSaved }) {
           </Field>
           <Field label="Functional currency" required err={fieldErr.functional_currency}>
             <select className="form-select" value={form.functional_currency || ''} onChange={set('functional_currency')} required>
-              <option value="">â€”</option>
-              {currencies.map((c) => <option key={c.code} value={c.code}>{c.code} Â· {c.name}</option>)}
+              <option value="">—</option>
+              {currencies.map((c) => <option key={c.code} value={c.code}>{c.code} · {c.name}</option>)}
             </select>
           </Field>
           <Field label="Tax PIN" err={fieldErr.tax_pin}>
