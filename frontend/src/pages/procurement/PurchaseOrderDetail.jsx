@@ -10,6 +10,9 @@
  *   /purchase-invoices/?purchase_order=  linked invoices
  *
  * Route can be either .../purchase-orders/:id or .../purchase-orders/new → if no id, show create form.
+ *
+ * The create form has its own required Company field. The API cannot guess the legal entity when a user
+ * has access to several, so "company" must always be sent explicitly.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -31,15 +34,31 @@ export default function PurchaseOrderDetail() {
   const isNew = id === 'new';
 
   if (isNew) {
-    return <CreatePO onCreated={(po) => navigate(`/procurement/purchase-orders/${po.id}`, { replace: true })} />;
+    return (
+      <CreatePO
+        onCreated={(po) => navigate(`/procurement/purchase-orders/${po.id}`, { replace: true })}
+        onCancel={() => navigate('/procurement/purchase-orders')}
+      />
+    );
   }
   return <EditPO id={id} navigate={navigate} can={can} notify={notify} companyParams={companyParams} />;
 }
 
 /* ------------------------------------------------------------------ create */
 
-function CreatePO({ onCreated }) {
+function CreatePO({ onCreated, onCancel }) {
+  const { user } = useAuth();
   const { companyParams, notify } = useApp();
+
+  const myCompanies = user?.companies || [];
+  const initialCompany = () => {
+    const selected = companyParams()?.company;
+    if (selected) return String(selected);
+    if (myCompanies.length === 1) return String(myCompanies[0].id);
+    return '';
+  };
+
+  const [company, setCompany] = useState(initialCompany);
   const [suppliers, setSuppliers] = useState([]);
   const [products, setProducts] = useState([]);
   const [depots, setDepots] = useState([]);
@@ -53,28 +72,45 @@ function CreatePO({ onCreated }) {
   const [error, setError] = useState('');
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
+  // If the user's company list arrives after first render, pick the default then.
   useEffect(() => {
+    if (!company) setCompany(initialCompany());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  // Products and currencies are global; suppliers and depots belong to the chosen company.
+  useEffect(() => {
+    Promise.all([api.products.listAll(), api.currencies.listAll()])
+      .then(([p, c]) => { setProducts(p); setCurrencies(c); })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!company) { setSuppliers([]); setDepots([]); return; }
     Promise.all([
-      api.suppliers.listAll({ ...companyParams(), status: 'ACTIVE' }),
-      api.products.listAll(),
-      api.depots.listAll({ ...companyParams() }),
-      api.currencies.listAll(),
-    ]).then(([s, p, d, c]) => { setSuppliers(s); setProducts(p); setDepots(d); setCurrencies(c); }).catch(() => {});
-  }, [companyParams]);
+      api.suppliers.listAll({ company, status: 'ACTIVE' }),
+      api.depots.listAll({ company }),
+    ]).then(([s, d]) => { setSuppliers(s); setDepots(d); }).catch(() => {});
+    // a supplier/depot from another company is no longer valid
+    setForm((f) => ({ ...f, supplier: '', loading_depot: '' }));
+  }, [company]);
 
   const setLine = (i, k, v) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, [k]: v } : l)));
 
   const submit = async (e) => {
-    e.preventDefault(); setBusy(true); setError('');
+    e.preventDefault();
+    if (!company) { setError('Select the company (legal entity) for this purchase order.'); return; }
+    setBusy(true); setError('');
     try {
       const body = {
         ...form,
-        company: companyParams().company,
+        company: Number(company),
         lines: lines.filter((l) => l.product && l.quantity && l.unit_price).map((l) => ({
           product: l.product, quantity: l.quantity, unit_price: l.unit_price,
           ...(l.tax_code ? { tax_code: l.tax_code } : {}),
         })),
       };
+      if (!body.lines.length) { setError('Add at least one line with product, quantity and unit price.'); setBusy(false); return; }
       ['expected_loading_date', 'loading_depot', 'currency'].forEach((k) => { if (!body[k]) delete body[k]; });
       const po = await api.purchaseOrders.create(body);
       notify('Purchase order created.', 'success');
@@ -93,8 +129,14 @@ function CreatePO({ onCreated }) {
       <form onSubmit={submit}>
         <div className="card"><div className="card__body">
           <div className="form-grid form-grid--3">
+            <Field label="Company" required>
+              <select className="select" value={company} onChange={(e) => setCompany(e.target.value)} required>
+                <option value="">—</option>
+                {myCompanies.map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}
+              </select>
+            </Field>
             <Field label="Supplier" required>
-              <select className="select" value={form.supplier} onChange={set('supplier')} required>
+              <select className="select" value={form.supplier} onChange={set('supplier')} required disabled={!company}>
                 <option value="">—</option>
                 {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}
               </select>
@@ -106,7 +148,7 @@ function CreatePO({ onCreated }) {
               <input type="date" className="input" value={form.expected_loading_date} onChange={set('expected_loading_date')} />
             </Field>
             <Field label="Loading depot">
-              <select className="select" value={form.loading_depot} onChange={set('loading_depot')}>
+              <select className="select" value={form.loading_depot} onChange={set('loading_depot')} disabled={!company}>
                 <option value="">—</option>
                 {depots.map((d) => <option key={d.id} value={d.id}>{d.code} · {d.name}</option>)}
               </select>
@@ -163,7 +205,7 @@ function CreatePO({ onCreated }) {
 
         {error && <p className="field-error mt-3" role="alert">{error}</p>}
         <div className="form-actions">
-          <button type="button" className="btn" onClick={() => onCreated(null)}>Cancel</button>
+          <button type="button" className="btn" onClick={onCancel}>Cancel</button>
           <button className="btn btn-primary" disabled={busy}>{busy ? 'Creating…' : 'Create PO'}</button>
         </div>
       </form>
@@ -250,6 +292,7 @@ function EditPO({ id, navigate, can, notify, companyParams }) {
         <div className="stack">
           <div className="card"><div className="card__header"><h2 className="card__title">Header</h2></div><div className="card__body">
             <div className="kv">
+              <div className="kv__item"><div className="kv__label">Company</div><div className="kv__value">{po.company_label || po.company}</div></div>
               <div className="kv__item"><div className="kv__label">Supplier</div><div className="kv__value">{po.supplier_label || po.supplier}</div></div>
               <div className="kv__item"><div className="kv__label">Order date</div><div className="kv__value">{po.order_date}</div></div>
               <div className="kv__item"><div className="kv__label">Expected loading</div><div className="kv__value">{po.expected_loading_date || '—'}</div></div>
