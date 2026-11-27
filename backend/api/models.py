@@ -1119,25 +1119,37 @@ class Shipment(FXDoc):
     supplier = OFK('Supplier')
     purchase_order = OFK('PurchaseOrder')
     sales_order = OFK('SalesOrder')
+    # ---- general information
+    shipment_type = Choice('CUSTOMER_DELIVERY DEPOT_TRANSFER EXPORT')
+    priority = Choice('NORMAL HIGH URGENT')
+    remarks = Text()
+    # ---- product
     product = FK('Product')
-    quantity = Qty()
+    quantity = Qty()                         # quantity ALLOCATED to this shipment (sum of the compartment lines)
     purchase_price = Price()
     selling_price = Price()
+    # ---- route and location
     depot = OFK('Depot')
     loading_tank = OFK('StorageTank')
     loading_date = ODate()
+    planned_dispatch_date = ODate()
     loading_quantity = Qty()
+    origin = Char(120)
+    destination = Char(160)
+    destination_county = Char(80)
+    delivery_address = Char(255)
+    destination_country = Char(60)           # export shipments
+    consignee = Char(160)                    # export shipments
+    border_crossing = OFK('BorderCrossing')
+    expected_delivery = OTime()
+    actual_delivery = OTime()
+    # ---- fleet
     truck_ownership = Choice('OWNED HIRED')
     vehicle = OFK('Vehicle')
     trailer = OFK('Trailer')
     driver = OFK('Driver')
     transporter = OFK('Transporter')
     hired_truck = OFK('TransporterVehicle')
-    origin = Char(120)
-    destination = Char(160)
-    border_crossing = OFK('BorderCrossing')
-    expected_delivery = OTime()
-    actual_delivery = OTime()
     distance_km = Qty()
     fuel_issued_litres = Qty()
     fuel_used_litres = Qty()
@@ -1145,6 +1157,11 @@ class Shipment(FXDoc):
     stock_issued = models.BooleanField(default=False, editable=False)
     intercompany_transaction = OFK('IntercompanyTransaction')
     status = Choice(SHIPMENT_STATUSES, n=30)
+
+    @property
+    def total_sales_value(self):
+        return q2(self.quantity * self.selling_price)
+
 
 
 class ShipmentLine(models.Model):
@@ -1168,6 +1185,7 @@ class ShipmentStage(Stamped):
     actual_at = OTime()
     location = Char(160)
     notes = Char(255)
+
 
 
 class ShipmentStatusHistory(models.Model):
@@ -1196,14 +1214,20 @@ class ShipmentStatusHistory(models.Model):
     def delete(self, *a, **kw): raise ValidationError('Shipment history is permanent.')
 
 
+
+
+
+
 class ShipmentDocument(Stamped):
     company = FK('Company')
     shipment = FK('Shipment')
-    doc_type = Choice('COMMERCIAL_INVOICE CERTIFICATE_OF_ORIGIN TRANSIT_DOC EXPORT_DECLARATION IMPORT_DOC '
-                      'DELIVERY_NOTE POD PHOTO OTHER', default='OTHER')
+    doc_type = Choice('SALES_ORDER STOCK_REFERENCE INVOICE COMMERCIAL_INVOICE CERTIFICATE_OF_ORIGIN TRANSIT_DOC '
+                      'EXPORT_DECLARATION IMPORT_DOC DELIVERY_NOTE POD VEHICLE_COMPLIANCE DRIVER_DOCUMENT PHOTO OTHER',
+                      default='OTHER')
     number = Char(60)
     file = models.FileField(upload_to='shipment_docs/%Y/%m/', blank=True)
     notes = Char(255)
+
 
 
 class ShipmentDelivery(Doc):
@@ -1219,8 +1243,11 @@ class ShipmentDelivery(Doc):
     loss_value = Money(editable=False)
     temperature_c = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     density = models.DecimalField(max_digits=7, decimal_places=4, null=True, blank=True)
-    received_by = Char(120)
-    pod_file = models.FileField(upload_to='pod/%Y/%m/', blank=True)
+    received_by = Char(120)                                 # receiver name
+    receiver_contact = Char(40)
+    delivery_note_no = Char(60)
+    receiver_signature = models.FileField(upload_to='pod_signatures/%Y/%m/', blank=True)
+    pod_file = models.FileField(upload_to='pod/%Y/%m/', blank=True)   # signed delivery note
     notes = Char(255)
     journal = OFK('Journal', editable=False)
     status = Choice('PENDING_APPROVAL APPROVED REJECTED')
@@ -1236,6 +1263,8 @@ class ShipmentCostAllocation(Stamped):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=['shipment', 'expense'], name='alloc_unique')]
+
+
 
 
 class ShipmentCostSheet(models.Model):
@@ -1271,6 +1300,83 @@ class ShipmentCostSheet(models.Model):
         ordering = ['shipment', '-version']
 
     def __str__(self): return f'{self.shipment} v{self.version}'
+
+
+
+
+    # ================================================================ SHIPMENTS
+SHIPMENT_STATUSES = ('DRAFT AWAITING_APPROVAL APPROVED AWAITING_LOADING LOADING LOADED DISPATCHED IN_TRANSIT '
+                     'AT_BORDER UNDER_CUSTOMS CLEARED ARRIVED DELIVERED RECONCILIATION_PENDING CLOSED CANCELLED')
+
+
+
+
+
+
+# ================================================================ TRIP ADVANCES (new)
+class TripAdvance(Doc):
+    """
+    Money given to the driver / responsible employee for approved trip expenses.
+
+    DRAFT -> AWAITING_APPROVAL -> APPROVED -> PAID -> RECONCILIATION_PENDING -> RECONCILED
+    (approval uses the normal approval workflow + ApprovalPolicy for doc_type 'TripAdvance';
+     payment and reconciliation are the actions in shipment_extras.py)
+    """
+    DOC_TYPE = 'TAD'
+    shipment = FK('Shipment')
+    recipient = OFK('Driver')                              # person receiving the advance (if a driver)
+    recipient_name = Char(150)
+    recipient_phone = Char(40)
+    payment_method = Choice('CASH MPESA BANK')
+    bank_account = OFK('BankAccount')                      # account the money was paid from
+    payment_reference = Char(80)
+    paid_amount = Money(editable=False)                    # approved total at the moment of payment
+    paid_at = OTime(editable=False)
+    paid_by = OFK('User', on_delete=models.SET_NULL, editable=False)
+    notes = Char(255)
+    # ---- reconciliation
+    returned_amount = Money()                              # unspent cash handed back
+    return_reference = Char(80)
+    reconciliation_notes = Char(255)
+    reconciled_by = OFK('User', on_delete=models.SET_NULL, editable=False)
+    reconciled_at = OTime(editable=False)
+    reconciliation_approved_by = OFK('User', on_delete=models.SET_NULL, editable=False)
+    reconciliation_approved_at = OTime(editable=False)
+    status = Choice('DRAFT AWAITING_APPROVAL APPROVED PAID RECONCILIATION_PENDING RECONCILED CANCELLED')
+
+    @property
+    def total(self):                                       # requested total (also used by the approval engine)
+        return sum((l.requested_amount for l in self.lines.all()), D0)
+
+    @property
+    def approved_total(self):
+        return sum((l.approved_amount for l in self.lines.all()), D0)
+
+    @property
+    def actual_total(self):
+        return sum((l.actual_amount for l in self.lines.all()), D0)
+
+    @property
+    def balance_to_return(self):                           # advance issued - actual expenses (negative = owed to employee)
+        return self.paid_amount - self.actual_total
+
+
+class TripAdvanceLine(models.Model):
+    advance = models.ForeignKey(TripAdvance, on_delete=models.CASCADE, related_name='lines')
+    category = FK('ExpenseCategory')
+    description = Char(160)
+    budget_amount = Money()
+    requested_amount = Money()
+    approved_amount = Money()
+    actual_amount = Money()
+    legal_basis = Char(160)                                # statutory / county charges: legal basis
+    issuing_authority = Char(160)                          # statutory / county charges: who issued the charge
+    receipt_no = Char(60)
+    expense = OFK('Expense', editable=False)               # draft Expense created when the reconciliation is approved
+
+    def __str__(self):
+        return f'{self.advance_id} {self.category_id}'
+
 
 
 # ================================================================ EXPORT & CUSTOMS
