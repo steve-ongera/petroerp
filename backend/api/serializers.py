@@ -92,11 +92,14 @@ PurchaseInvoiceSerializer = make_nested(m.PurchaseInvoice, m.PurchaseInvoiceLine
 SalesOrderSerializer = make_nested(m.SalesOrder, m.SalesOrderLine, 'order')
 SalesInvoiceSerializer = make_nested(m.SalesInvoice, m.SalesInvoiceLine, 'invoice', computed=('outstanding',))
 ShipmentSerializer = make_nested(m.Shipment, m.ShipmentLine, 'shipment',
-                                 read_only=('loading_quantity', 'dispatched_at', 'actual_delivery'))
+                                 read_only=('loading_quantity', 'dispatched_at', 'actual_delivery'),
+                                 computed=('total_sales_value',))
 TransporterInvoiceSerializer = make_serializer(m.TransporterInvoice, computed=('outstanding',),
                                                read_only=('tax_total', 'total', 'amount_paid', 'amount_credited'))
 TransportBookingSerializer = make_serializer(m.TransportBooking, read_only=('total_charge',), computed=('balance_payable',))
 ExpenseSerializer = make_serializer(m.Expense, computed=('total', 'outstanding'))
+
+
 
 
 class PaymentAllocationSerializer(BaseSerializer):
@@ -111,6 +114,7 @@ SalesCreditNoteSerializer = make_serializer(m.SalesCreditNote)
 SupplierCreditNoteSerializer = make_serializer(m.SupplierCreditNote)
 FixedAssetSerializer = make_serializer(m.FixedAsset, computed=('net_book_value',))
 IntercompanySerializer = make_serializer(m.IntercompanyTransaction, computed=('outstanding',))
+
 
 
 class JournalLineSerializer(BaseSerializer):
@@ -199,6 +203,72 @@ class RoleSerializer(BaseSerializer):
         fields = ['id', 'code', 'name', 'permission_codes']
 
 
+
+
+class TripAdvanceLineSerializer(BaseSerializer):
+    """Approved / actual amounts and the created expense are set by the workflow actions, never by the form."""
+
+    class Meta:
+        model = m.TripAdvanceLine
+        exclude = ('advance',)
+        read_only_fields = ['approved_amount', 'actual_amount', 'expense']
+
+
+class TripAdvanceSerializer(BaseSerializer):
+    """Header + lines written together. The legal entity always comes from the shipment."""
+    lines = TripAdvanceLineSerializer(many=True)
+    total = serializers.ReadOnlyField()
+    approved_total = serializers.ReadOnlyField()
+    actual_total = serializers.ReadOnlyField()
+    balance_to_return = serializers.ReadOnlyField()
+
+    class Meta:
+        model = m.TripAdvance
+        fields = '__all__'
+        read_only_fields = ['company', 'reference', 'status', 'paid_amount', 'paid_at', 'paid_by', 'payment_reference',
+                            'returned_amount', 'return_reference', 'reconciliation_notes', 'reconciled_by', 'reconciled_at',
+                            'reconciliation_approved_by', 'reconciliation_approved_at', 'bank_account',
+                            'created_at', 'updated_at', 'created_by']
+
+    def validate(self, attrs):
+        shipment = attrs.get('shipment') or getattr(self.instance, 'shipment', None)
+        request = self.context.get('request')
+        if shipment is not None and request is not None and shipment.company_id not in request.user.allowed_company_ids():
+            raise serializers.ValidationError({'shipment': 'You are not authorised for this legal entity.'})
+        if shipment is not None and shipment.status in ('CLOSED', 'CANCELLED'):
+            raise serializers.ValidationError({'shipment': f'The shipment is {shipment.status}.'})
+        for ln in attrs.get('lines', []):
+            if ln.get('requested_amount', 0) < 0 or ln.get('budget_amount', 0) < 0:
+                raise serializers.ValidationError({'lines': 'Amounts cannot be negative.'})
+        return attrs
+
+    def _write_lines(self, adv, lines):
+        for ln in lines:
+            m.TripAdvanceLine.objects.create(advance=adv, **dict(ln))
+
+    @transaction.atomic
+    def create(self, vd):
+        lines = vd.pop('lines', [])
+        vd['company'] = vd['shipment'].company
+        adv = m.TripAdvance.objects.create(**vd)
+        self._write_lines(adv, lines)
+        return adv
+
+    @transaction.atomic
+    def update(self, instance, vd):
+        lines = vd.pop('lines', None)
+        for k, v in vd.items():
+            setattr(instance, k, v)
+        instance.save()
+        if lines is not None:
+            instance.lines.all().delete()
+            self._write_lines(instance, lines)
+        return instance
+
+
+
+
+
 # ---------------------------------------------------------------- generic registry
 _SPECIAL = {
     m.PurchaseOrder: PurchaseOrderSerializer, m.PurchaseInvoice: PurchaseInvoiceSerializer,
@@ -209,7 +279,10 @@ _SPECIAL = {
     m.IntercompanyTransaction: IntercompanySerializer, m.Journal: JournalSerializer,
     m.ShipmentCostSheet: ShipmentCostSheetSerializer, m.ApprovalRequest: ApprovalRequestSerializer,
     m.AuditLog: AuditLogSerializer, m.Notification: NotificationSerializer,
+    m.TripAdvance: TripAdvanceSerializer,
 }
+
+
 _CACHE = {}
 
 
@@ -291,10 +364,15 @@ class DeliveryIn(serializers.Serializer):
     delivery_date = serializers.DateField(required=False)
     is_final = serializers.BooleanField(required=False, default=False)
     received_by = serializers.CharField(required=False, allow_blank=True)
+    receiver_contact = serializers.CharField(required=False, allow_blank=True)
+    delivery_note_no = serializers.CharField(required=False, allow_blank=True)
     notes = serializers.CharField(required=False, allow_blank=True)
     temperature_c = serializers.DecimalField(max_digits=5, decimal_places=2, required=False, allow_null=True)
     density = serializers.DecimalField(max_digits=7, decimal_places=4, required=False, allow_null=True)
     pod_file = serializers.FileField(required=False)
+    receiver_signature = serializers.FileField(required=False)
+
+
 
 
 class CostIn(serializers.Serializer):
@@ -470,3 +548,48 @@ class TripDataIn(serializers.Serializer):
     fuel_issued_litres = serializers.DecimalField(max_digits=18, decimal_places=3, required=False)
     fuel_used_litres = serializers.DecimalField(max_digits=18, decimal_places=3, required=False)
     expected_delivery = serializers.DateTimeField(required=False)
+
+
+
+
+# ---------------------------------------------------------------- explicit serializers
+
+
+
+# #####################################################################################################
+# PART 3  -  REPLACE  class DeliveryIn  (full class below)  and ADD the trip advance input classes at the
+#            very end of serializers.py (after TripDataIn).
+# #####################################################################################################
+
+
+class TripAdvanceAdjustLineIn(serializers.Serializer):
+    id = serializers.IntegerField()
+    approved_amount = serializers.DecimalField(max_digits=18, decimal_places=2)
+
+
+class TripAdvanceAdjustIn(serializers.Serializer):
+    lines = TripAdvanceAdjustLineIn(many=True)
+
+
+class TripAdvancePayIn(serializers.Serializer):
+    payment_method = serializers.ChoiceField(choices=['CASH', 'MPESA', 'BANK'])
+    bank_account = serializers.PrimaryKeyRelatedField(queryset=m.BankAccount.objects.all(), required=False, allow_null=True)
+    payment_reference = serializers.CharField(required=False, allow_blank=True)
+    recipient = serializers.PrimaryKeyRelatedField(queryset=m.Driver.objects.all(), required=False, allow_null=True)
+    recipient_name = serializers.CharField(required=False, allow_blank=True)
+    recipient_phone = serializers.CharField(required=False, allow_blank=True)
+
+
+class TripAdvanceActualLineIn(serializers.Serializer):
+    id = serializers.IntegerField()
+    actual_amount = serializers.DecimalField(max_digits=18, decimal_places=2)
+    receipt_no = serializers.CharField(required=False, allow_blank=True)
+    legal_basis = serializers.CharField(required=False, allow_blank=True)
+    issuing_authority = serializers.CharField(required=False, allow_blank=True)
+
+
+class TripAdvanceReconcileIn(serializers.Serializer):
+    lines = TripAdvanceActualLineIn(many=True)
+    returned_amount = serializers.DecimalField(max_digits=18, decimal_places=2, required=False, default=0)
+    return_reference = serializers.CharField(required=False, allow_blank=True)
+    notes = serializers.CharField(required=False, allow_blank=True)

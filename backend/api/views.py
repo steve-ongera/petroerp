@@ -12,6 +12,7 @@ Security model (server-side):
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError
 from django.db.models import Q, Sum
+
 from django.http import HttpResponse
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, status, viewsets
@@ -28,6 +29,9 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from . import models as m
 from . import serializers as sz
 from . import services as svc
+
+from . import shipment_extras as sx
+
 
 ROUTES = []          # (prefix, viewset) pairs consumed by api/urls.py
 D0 = m.D0
@@ -769,8 +773,13 @@ class TransporterInvoiceViewSet(make_viewset(m.TransporterInvoice, filters_=('tr
 
 
 # ====================================================================== shipments, customs
+
+
 @route('shipments')
-class ShipmentViewSet(make_viewset(m.Shipment, filters_=('customer', 'supplier', 'product', 'truck_ownership', 'transporter', 'vehicle'),
+class ShipmentViewSet(make_viewset(m.Shipment,
+                                   filters_=('customer', 'supplier', 'product', 'truck_ownership', 'transporter', 'vehicle',
+                                             'shipment_type', 'priority', 'sales_order'),
+                                   search=('origin', 'destination', 'destination_county', 'customer__name'),
                                    date_field='loading_date')):
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
@@ -803,9 +812,15 @@ class ShipmentViewSet(make_viewset(m.Shipment, filters_=('customer', 'supplier',
     def record_delivery(self, request, pk=None):
         d = sz.DeliveryIn(data=request.data)
         d.is_valid(raise_exception=True)
-        v = d.validated_data
+        v = dict(d.validated_data)
+        # services.record_delivery does not know the receiver details; store them on the delivery afterwards.
+        extras = {k: v.pop(k) for k in ('receiver_contact', 'delivery_note_no', 'receiver_signature') if k in v}
         dv = svc.record_delivery(self.get_object(), request.user, **v)
-        return Response(sz.serializer_for(m.ShipmentDelivery)(dv).data, status=201)
+        if extras:
+            for k, val in extras.items():
+                setattr(dv, k, val)
+            dv.save(update_fields=list(extras))
+        return Response(sz.serializer_for(m.ShipmentDelivery)(dv, context=self.get_serializer_context()).data, status=201)
 
     @action(detail=True, methods=['post'])
     def cost(self, request, pk=None):
@@ -833,6 +848,11 @@ class ShipmentViewSet(make_viewset(m.Shipment, filters_=('customer', 'supplier',
         return Response(svc.fuel_variance(self.get_object()) or {})
 
     @action(detail=True, methods=['get'])
+    def compliance(self, request, pk=None):
+        """Vehicle / driver / truck readiness checklist (display only; the server still enforces it at loading and dispatch)."""
+        return Response(sx.shipment_compliance(self.get_object()))
+
+    @action(detail=True, methods=['get'])
     def timeline(self, request, pk=None):
         qs = m.ShipmentStatusHistory.objects.filter(shipment=self.get_object()).select_related('updated_by')
         return Response([{'id': h.id, 'from': h.previous_status, 'to': h.new_status, 'at': h.changed_at, 'location': h.location,
@@ -842,11 +862,76 @@ class ShipmentViewSet(make_viewset(m.Shipment, filters_=('customer', 'supplier',
 
 reg('shipment-status-history', m.ShipmentStatusHistory, readonly=True, filters_=('shipment',))
 reg('shipment-stages', m.ShipmentStage, filters_=('shipment',))
-reg('shipment-documents', m.ShipmentDocument, filters_=('shipment',))
+reg('shipment-documents', m.ShipmentDocument, filters_=('shipment', 'doc_type'))
 reg('shipment-deliveries', m.ShipmentDelivery, readonly=True, filters_=('shipment',), date_field='delivery_date')
 reg('shipment-allocations', m.ShipmentCostAllocation, readonly=True, filters_=('shipment', 'expense'))
 reg('export-declarations', m.ExportDeclaration, filters_=('shipment',), simple_status=('SUBMITTED', 'QUERIED', 'CLEARED', 'REJECTED'), editable=None)
 reg('compliance-checks', m.ShipmentComplianceCheck, filters_=('shipment',))
+
+
+@route('cost-sheets')
+class CostSheetViewSet(make_viewset(m.ShipmentCostSheet, readonly=True, filters_=('shipment', 'is_final'))):
+    pass
+
+
+@route('trip-advances')
+class TripAdvanceViewSet(make_viewset(m.TripAdvance, filters_=('shipment', 'recipient'),
+                                      search=('recipient_name', 'payment_reference'))):
+    """
+    Trip budget -> advance -> reconciliation.
+      POST   /trip-advances/                         create (DRAFT) with lines
+      PUT    /trip-advances/:id/                     edit (DRAFT only; handled by BaseViewSet)
+      POST   /trip-advances/:id/submit/              send for approval (BaseViewSet, uses the approval policy)
+      POST   /trip-advances/:id/adjust/              approver reduces approved amounts (while awaiting approval)
+      POST   /trip-advances/:id/pay/                 record the payment (after approval)
+      POST   /trip-advances/:id/submit-reconciliation/    actual spend submitted
+      POST   /trip-advances/:id/approve-reconciliation/   another user approves -> draft Expenses are created
+      POST   /trip-advances/:id/reject-reconciliation/
+      Approve / reject of the advance itself happens on the Approvals page (/approvals/:id/approve|reject).
+    """
+
+    def _out(self, adv):
+        adv.refresh_from_db()
+        return Response(sz.serializer_for(m.TripAdvance)(adv, context=self.get_serializer_context()).data)
+
+    @action(detail=True, methods=['post'])
+    def adjust(self, request, pk=None):
+        d = sz.TripAdvanceAdjustIn(data=request.data)
+        d.is_valid(raise_exception=True)
+        adv = sx.adjust_approved_amounts(self.get_object(), request.user, [dict(l) for l in d.validated_data['lines']])
+        return self._out(adv)
+
+    @action(detail=True, methods=['post'])
+    def pay(self, request, pk=None):
+        d = sz.TripAdvancePayIn(data=request.data)
+        d.is_valid(raise_exception=True)
+        v = d.validated_data
+        adv = sx.pay_trip_advance(self.get_object(), request.user, payment_method=v['payment_method'],
+                                  bank_account=v.get('bank_account'), payment_reference=v.get('payment_reference', ''),
+                                  recipient=v.get('recipient'), recipient_name=v.get('recipient_name', ''),
+                                  recipient_phone=v.get('recipient_phone', ''))
+        return self._out(adv)
+
+    @action(detail=True, methods=['post'], url_path='submit-reconciliation')
+    def submit_reconciliation(self, request, pk=None):
+        d = sz.TripAdvanceReconcileIn(data=request.data)
+        d.is_valid(raise_exception=True)
+        v = d.validated_data
+        adv = sx.submit_reconciliation(self.get_object(), request.user, [dict(l) for l in v['lines']],
+                                       returned_amount=v.get('returned_amount', 0), return_reference=v.get('return_reference', ''),
+                                       notes=v.get('notes', ''))
+        return self._out(adv)
+
+    @action(detail=True, methods=['post'], url_path='approve-reconciliation')
+    def approve_reconciliation(self, request, pk=None):
+        return self._out(sx.approve_reconciliation(self.get_object(), request.user))
+
+    @action(detail=True, methods=['post'], url_path='reject-reconciliation')
+    def reject_reconciliation(self, request, pk=None):
+        d = sz.ApprovalDecisionIn(data=request.data)
+        d.is_valid(raise_exception=True)
+        return self._out(sx.reject_reconciliation(self.get_object(), request.user, d.validated_data.get('comment', '')))
+
 
 
 @route('cost-sheets')
