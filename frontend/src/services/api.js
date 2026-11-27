@@ -350,7 +350,13 @@ const vehicles = {
   metrics: (id, params) => get(`/vehicles/${id}/metrics/`, params),
 };
 const trailers = crud('trailers');
-const drivers = crud('drivers');
+const drivers = {
+  ...crud('drivers'),
+  profile: (id) => get(`/drivers/${id}/profile/`),
+  uploadPhoto: (id, file) => post(`/drivers/${id}/photo/`, toFormData({ file })),
+  removePhoto: (id) => request('DELETE', `/drivers/${id}/photo/`),
+};
+
 const vehicleAssignments = readOnly('vehicle-assignments');
 const vehicleMaintenance = crud('vehicle-maintenance');
 const vehicleExpenses = readOnly('vehicle-expenses');

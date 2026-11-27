@@ -715,12 +715,111 @@ class VehicleViewSet(make_viewset(m.Vehicle, search=('make', 'model'), filters_=
 
 
 reg('trailers', m.Trailer)
-reg('drivers', m.Driver, search=('licence_number', 'id_number'))
+
 reg('vehicle-assignments', m.VehicleAssignment, readonly=True)
 reg('vehicle-maintenance', m.VehicleMaintenance, date_field='maintenance_date', filters_=('vehicle',))
 reg('vehicle-expenses', m.VehicleExpense, date_field='expense_date', filters_=('vehicle', 'shipment'), readonly=True)
 reg('vehicle-documents', m.VehicleDocument, filters_=('vehicle',))
 
+
+
+@route('drivers')
+class DriverViewSet(make_viewset(m.Driver, search=('licence_number', 'id_number'), filters_=('employment_status',))):
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    @action(detail=True, methods=['get'])
+    def profile(self, request, pk=None):
+        """Everything about one driver in one payload: licence, current trip, stats, trips, vehicles, advances."""
+        d = self.get_object()
+        today = svc.today()
+        not_trips = ('DRAFT', 'AWAITING_APPROVAL', 'CANCELLED')
+        done = ('DELIVERED', 'RECONCILIATION_PENDING', 'CLOSED')
+        planned = ('APPROVED', 'AWAITING_LOADING')
+
+        ships = m.Shipment.objects.filter(driver=d).select_related('customer', 'product', 'vehicle').order_by('-id')
+        real = ships.exclude(status__in=not_trips)
+        agg = real.aggregate(km=Sum('distance_km'), litres=Sum('loading_quantity'), fuel=Sum('fuel_used_litres'))
+        active = list(ships.filter(status__in=svc.ACTIVE_SHIPMENT))
+        cur = active[0] if active else None
+
+        assignments = list(m.VehicleAssignment.objects.filter(driver=d)
+                           .select_related('vehicle', 'trailer', 'shipment').order_by('-start_at')[:100])
+        cur_assign = next((a for a in assignments if a.status == 'ACTIVE'), None)
+        cur_vehicle = (cur_assign.vehicle if cur_assign else (cur.vehicle if cur and cur.vehicle_id else None))
+
+        def trip_row(s):
+            return {'id': s.id, 'reference': s.reference, 'status': s.status,
+                    'customer': str(s.customer) if s.customer_id else '', 'product': s.product.name,
+                    'origin': s.origin, 'destination': s.destination, 'loading_date': s.loading_date,
+                    'dispatched_at': s.dispatched_at, 'delivered_at': s.actual_delivery,
+                    'vehicle': s.vehicle.registration_number if s.vehicle_id else '',
+                    'litres': s.loading_quantity or s.quantity, 'distance_km': s.distance_km,
+                    'fuel_used_litres': s.fuel_used_litres}
+
+        days_left = (d.licence_expiry - today).days if d.licence_expiry else None
+        if days_left is None:
+            lic_state = 'UNKNOWN'
+        elif days_left < 0:
+            lic_state = 'EXPIRED'
+        elif days_left <= 30:
+            lic_state = 'EXPIRING'
+        else:
+            lic_state = 'VALID'
+
+        advances = m.TripAdvance.objects.filter(recipient=d).select_related('shipment').prefetch_related('lines').order_by('-id')[:100]
+
+        return Response({
+            'driver': sz.serializer_for(m.Driver)(d, context=self.get_serializer_context()).data,
+            'licence': {'expiry': d.licence_expiry, 'days_left': days_left, 'state': lic_state},
+            'current': {
+                'on_trip': cur is not None,
+                'shipment': {'id': cur.id, 'reference': cur.reference, 'status': cur.status,
+                             'origin': cur.origin, 'destination': cur.destination,
+                             'customer': str(cur.customer) if cur.customer_id else ''} if cur else None,
+                'vehicle': {'id': cur_vehicle.id, 'registration_number': cur_vehicle.registration_number,
+                            'make': cur_vehicle.make, 'model': cur_vehicle.model} if cur_vehicle else None,
+                'since': cur_assign.start_at if cur_assign else (cur.dispatched_at if cur else None),
+            },
+            'stats': {
+                'total_trips': real.count(),
+                'completed': real.filter(status__in=done).count(),
+                'active': len(active),
+                'upcoming': ships.filter(status__in=planned).count(),
+                'distance_km': agg['km'] or 0,
+                'litres_moved': agg['litres'] or 0,
+                'fuel_used_litres': agg['fuel'] or 0,
+            },
+            'trips': [trip_row(s) for s in ships[:200]],
+            'assignments': [{'id': a.id, 'vehicle': a.vehicle.registration_number,
+                             'trailer': a.trailer.registration_number if a.trailer_id else '',
+                             'shipment': a.shipment.reference if a.shipment_id else '',
+                             'start_at': a.start_at, 'end_at': a.end_at, 'status': a.status} for a in assignments],
+            'advances': [{'id': a.id, 'reference': a.reference, 'shipment': a.shipment.reference, 'status': a.status,
+                          'requested': a.total, 'paid': a.paid_amount, 'actual': a.actual_total,
+                          'balance_to_return': a.balance_to_return} for a in advances],
+        })
+
+    @action(detail=True, methods=['post', 'delete'], parser_classes=[MultiPartParser, FormParser])
+    def photo(self, request, pk=None):
+        """POST file=<image> uploads / replaces the profile photo; DELETE removes it."""
+        d = self.get_object()
+        if request.method == 'POST':
+            f = request.FILES.get('file')
+            if not f:
+                raise DRFValidationError({'detail': 'No file uploaded.'})
+            if f.size > 5 * 1024 * 1024 or f.name.rsplit('.', 1)[-1].lower() not in ('jpg', 'jpeg', 'png', 'webp'):
+                raise DRFValidationError({'detail': 'Photo must be a jpg/png/webp image under 5 MB.'})
+            if d.photo:
+                d.photo.delete(save=False)
+            d.photo = f
+            svc.audit(request.user, 'DRIVER_PHOTO', d)
+        else:
+            if d.photo:
+                d.photo.delete(save=False)
+            d.photo = ''
+            svc.audit(request.user, 'DRIVER_PHOTO_REMOVED', d)
+        d.save(update_fields=['photo', 'updated_at'])
+        return Response({'photo': request.build_absolute_uri(d.photo.url) if d.photo else None})
 
 @route('transporters')
 class TransporterViewSet(make_viewset(m.Transporter, search=('tax_pin',))):

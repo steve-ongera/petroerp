@@ -1,5 +1,5 @@
 /**
- * Owned fleet — vehicles.
+ * Owned fleet â€” vehicles.
  * - CRUD /vehicles/
  * - POST /vehicles/:id/log-expense/  (Expense + VehicleExpense in one shot)
  * - GET  /vehicles/:id/metrics/?date_from=&date_to=
@@ -17,7 +17,7 @@ const OWNERSHIP = ['OWNED', 'LEASED'];
 const EXPENSE_TYPES = ['FUEL', 'ALLOWANCE', 'ROAD', 'PARKING', 'REPAIR', 'TYRES', 'OTHER'];
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtMoney = (n) => {
-  if (n == null || n === '') return '—';
+  if (n == null || n === '') return 'â€”';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
@@ -71,11 +71,11 @@ export default function Vehicles() {
       {/* ---------- Page header: icon tile + title + actions ---------- */}
       <div className="page-header">
         <div className="page-header__lead">
-          
+
           <div className="page-header__text">
             <h1 className="page-title">Vehicles</h1>
             <p className="page-subtitle">
-              Owned and leased fleet{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
+              Owned and leased fleet{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -185,11 +185,11 @@ export default function Vehicles() {
                     <tr key={v.id}>
                       <td className="cell-mono text-brand fw-600">{v.registration_number}</td>
                       <td className="cell-name">{v.make} {v.model}</td>
-                      <td>{v.truck_type || '—'}</td>
+                      <td>{v.truck_type || 'â€”'}</td>
                       <td className="cell-num">{Number(v.tank_capacity || 0).toLocaleString()}</td>
                       <td><span className="badge badge-neutral">{v.ownership}</span></td>
-                      <td>{v.insurance_expiry || '—'}</td>
-                      <td>{v.inspection_expiry || '—'}</td>
+                      <td>{v.insurance_expiry || 'â€”'}</td>
+                      <td>{v.inspection_expiry || 'â€”'}</td>
                       <td>
                         <span className={`status-pill ${statusPill(v.status)}`}>{v.status.replace('_', ' ')}</span>
                       </td>
@@ -225,6 +225,7 @@ export default function Vehicles() {
         <VehicleModal
           row={editing}
           companyParams={companyParams}
+          activeCompanyObj={activeCompanyObj}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); notify('Saved.', 'success'); load(); }}
         />
@@ -242,9 +243,19 @@ export default function Vehicles() {
   );
 }
 
-function VehicleModal({ row, companyParams, onClose, onSaved }) {
+function VehicleModal({ row, companyParams, activeCompanyObj, onClose, onSaved }) {
   const isNew = !row.id;
+  const app = useApp();
+  const auth = useAuth();
+
+  // Company that this vehicle belongs to: existing row -> active company -> ?company= param.
+  const knownCompany = row.company || activeCompanyObj?.id || companyParams()?.company || '';
+  // Only when no company can be determined do we ask the user to pick one.
+  const companyOptions = app.companies || auth.user?.companies || [];
+
   const [form, setForm] = useState({
+    company: knownCompany ? String(knownCompany) : '',
+    code: row.code || '',
     registration_number: row.registration_number || '', make: row.make || '', model: row.model || '',
     truck_type: row.truck_type || '', tank_capacity: row.tank_capacity ?? '',
     compartments: JSON.stringify(row.compartments || []),
@@ -259,12 +270,31 @@ function VehicleModal({ row, companyParams, onClose, onSaved }) {
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   const submit = async (e) => {
-    e.preventDefault(); setBusy(true); setError(''); setFieldErr({});
+    e.preventDefault(); setError(''); setFieldErr({});
+
+    if (!form.company) {
+      setFieldErr({ company: 'Select a company.' });
+      setError('Select a company for this vehicle.');
+      return;
+    }
+
+    setBusy(true);
     try {
-      const body = { ...form, company: companyParams().company };
+      const body = { ...form, company: Number(form.company) };
+
+      // `code` is required by the unique (company, code) rule; blank lets the server auto-generate VEH-xxxxx.
+      body.code = (form.code || '').trim();
+
       try { body.compartments = JSON.parse(form.compartments || '[]'); } catch { delete body.compartments; }
-      ['purchase_value', 'purchase_date', 'insurance_expiry', 'inspection_expiry', 'fuel_norm_km_per_litre']
+
+      // Nullable columns -> null when empty
+      ['purchase_date', 'insurance_expiry', 'inspection_expiry', 'fuel_norm_km_per_litre']
         .forEach((k) => { if (!body[k]) body[k] = null; });
+
+      // NOT-nullable numeric columns -> 0 when empty
+      ['purchase_value', 'tank_capacity', 'odometer_km']
+        .forEach((k) => { if (body[k] === '' || body[k] == null) body[k] = 0; });
+
       isNew ? await api.vehicles.create(body) : await api.vehicles.update(row.id, body);
       onSaved();
     } catch (err) { setError(errorMessage(err)); setFieldErr(fieldErrors(err)); }
@@ -292,13 +322,32 @@ function VehicleModal({ row, companyParams, onClose, onSaved }) {
       <form id="vehicleForm" onSubmit={submit}>
         <h6 className="modal-section-title"><i className="bi bi-card-text" aria-hidden="true"></i>Vehicle Details</h6>
         <div className="form-grid">
+          {/* Shown only when the page has no single active company */}
+          {!knownCompany && (
+            <Field label="Company" required err={fieldErr.company}>
+              <select className="form-select" value={form.company} onChange={set('company')} required>
+                <option value="">Select company...</option>
+                {companyOptions.map((c) => (
+                  <option key={c.id} value={c.id}>{c.code ? `${c.code} â€” ` : ''}{c.name}</option>
+                ))}
+              </select>
+            </Field>
+          )}
+          <Field label="Code" err={fieldErr.code}>
+            <input
+              className="form-control font-mono"
+              value={form.code}
+              onChange={set('code')}
+              placeholder="Auto-generated if empty"
+            />
+          </Field>
           <Field label="Registration" required err={fieldErr.registration_number}>
             <input className="form-control font-mono" value={form.registration_number} onChange={set('registration_number')} required />
           </Field>
           <Field label="Make"><input className="form-control" value={form.make} onChange={set('make')} /></Field>
           <Field label="Model"><input className="form-control" value={form.model} onChange={set('model')} /></Field>
           <Field label="Truck type"><input className="form-control" value={form.truck_type} onChange={set('truck_type')} /></Field>
-          <Field label="Capacity (L)">
+          <Field label="Capacity (L)" err={fieldErr.tank_capacity}>
             <input type="number" step="0.001" className="form-control num" value={form.tank_capacity} onChange={set('tank_capacity')} />
           </Field>
           <Field label="Compartments (JSON array)">
@@ -318,7 +367,7 @@ function VehicleModal({ row, companyParams, onClose, onSaved }) {
 
         <h6 className="modal-section-title"><i className="bi bi-shield-check" aria-hidden="true"></i>Purchase, Compliance & Usage</h6>
         <div className="form-grid">
-          <Field label="Purchase value">
+          <Field label="Purchase value" err={fieldErr.purchase_value}>
             <input type="number" step="0.01" className="form-control num" value={form.purchase_value} onChange={set('purchase_value')} />
           </Field>
           <Field label="Purchase date">
@@ -330,10 +379,10 @@ function VehicleModal({ row, companyParams, onClose, onSaved }) {
           <Field label="Inspection expiry">
             <input type="date" className="form-control" value={form.inspection_expiry} onChange={set('inspection_expiry')} />
           </Field>
-          <Field label="Fuel norm (km/L)">
+          <Field label="Fuel norm (km/L)" err={fieldErr.fuel_norm_km_per_litre}>
             <input type="number" step="0.01" className="form-control num" value={form.fuel_norm_km_per_litre} onChange={set('fuel_norm_km_per_litre')} />
           </Field>
-          <Field label="Odometer (km)">
+          <Field label="Odometer (km)" err={fieldErr.odometer_km}>
             <input type="number" step="0.001" className="form-control num" value={form.odometer_km} onChange={set('odometer_km')} />
           </Field>
         </div>
@@ -369,6 +418,7 @@ function LogExpenseModal({ vehicle, companyParams, onClose, onDone }) {
     try {
       const body = { ...form };
       ['litres', 'bank_account'].forEach((k) => { if (!body[k]) delete body[k]; });
+      if (body.odometer_km === '') delete body.odometer_km;
       await api.vehicles.logExpense(vehicle.id, body);
       onDone();
     } catch (err) { setError(errorMessage(err)); setFieldErr(fieldErrors(err)); }
@@ -398,8 +448,8 @@ function LogExpenseModal({ vehicle, companyParams, onClose, onDone }) {
         <div className="form-grid">
           <Field label="Category" required err={fieldErr.category}>
             <select className="form-select" value={form.category} onChange={set('category')} required>
-              <option value="">—</option>
-              {categories.map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}
+              <option value="">â€”</option>
+              {categories.map((c) => <option key={c.id} value={c.id}>{c.code} â€” {c.name}</option>)}
             </select>
           </Field>
           <Field label="Type" required>
@@ -431,7 +481,7 @@ function LogExpenseModal({ vehicle, companyParams, onClose, onDone }) {
           {form.payment_method !== 'CREDIT' && form.payment_method !== 'CASH' && (
             <Field label="Bank account">
               <select className="form-select" value={form.bank_account} onChange={set('bank_account')}>
-                <option value="">—</option>
+                <option value="">â€”</option>
                 {bankAccounts.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
             </Field>
@@ -453,7 +503,7 @@ function LogExpenseModal({ vehicle, companyParams, onClose, onDone }) {
 function MetricsModal({ vehicle, data, onClose }) {
   const money = (n) => Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2 });
   const items = data && Object.keys(data).length ? [
-    ['Trips', data.trips ?? '—'],
+    ['Trips', data.trips ?? 'â€”'],
     ['Distance (km)', Number(data.km || 0).toLocaleString()],
     ['Operating cost', money(data.operating_cost)],
     ['Cost / km', Number(data.cost_per_km || 0).toFixed(4)],
@@ -467,7 +517,7 @@ function MetricsModal({ vehicle, data, onClose }) {
     <Modal
       show
       onClose={onClose}
-      title={`Metrics · ${vehicle.registration_number}`}
+      title={`Metrics â€” ${vehicle.registration_number}`}
       subtitle={`${vehicle.make} ${vehicle.model}`}
       icon="bi-bar-chart"
       footer={<button type="button" className="btn btn-secondary" onClick={onClose}>Close</button>}

@@ -957,8 +957,8 @@ class Driver(Coded):
     licence_category = Char(20)
     licence_expiry = ODate()
     phone = Char(40)
+    photo = models.FileField(upload_to='driver_photos/%Y/%m/', blank=True)
     employment_status = Choice('ACTIVE SUSPENDED TERMINATED')
-
 
 class VehicleAssignment(Stamped):
     company = FK('Company')
