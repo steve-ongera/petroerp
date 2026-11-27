@@ -1,12 +1,19 @@
 ﻿/**
  * Goods receipts — read-only (created by PO receive action).
  * - GET /goods-receipts/   readOnly, filter by purchase_order
+ * - "View" opens the receipt details (measurements, tank, cost) with a link back to the purchase order.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useApp } from '../../context/AppContext';
 import api, { errorMessage } from '../../services/api';
+import Modal from '../../components/Modal';
 import Pagination, { usePagination } from '../../components/Pagination';
 import TableSkeleton from '../../components/TableSkeleton';
+import { KV } from '../../components/PageSection';
+
+const num = (v, d = 0) => (v == null || v === '' ? '—'
+  : Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }));
 
 export default function GoodsReceipts() {
   const { companyParams, activeCompanyObj } = useApp();
@@ -16,6 +23,7 @@ export default function GoodsReceipts() {
   const [search, setSearch] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [viewing, setViewing] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -127,7 +135,7 @@ export default function GoodsReceipts() {
         </div>
 
         {loading ? (
-          <TableSkeleton rows={8} columns={10} />
+          <TableSkeleton rows={8} columns={11} />
         ) : rows.length === 0 ? (
           <div className="empty-state">
             <i className="bi bi-box-seam"></i>
@@ -152,6 +160,7 @@ export default function GoodsReceipts() {
                     <th className="text-right">Total</th>
                     <th>Vehicle</th>
                     <th>Status</th>
+                    <th style={{ width: '4rem' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -167,6 +176,17 @@ export default function GoodsReceipts() {
                       <td className="cell-num">{Number(g.total_cost).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                       <td className="cell-mono">{g.vehicle_reg || '—'}</td>
                       <td><span className="status-pill status-pill--info">{g.status}</span></td>
+                      <td>
+                        <button
+                          type="button"
+                          className="btn btn-icon"
+                          title="View GRN details"
+                          aria-label={`View ${g.reference}`}
+                          onClick={() => setViewing(g)}
+                        >
+                          <i className="bi bi-eye"></i>
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -177,6 +197,77 @@ export default function GoodsReceipts() {
 
         {!loading && rows.length > 0 && <Pagination {...paginationProps} />}
       </section>
+
+      {viewing && <GrnModal grn={viewing} onClose={() => setViewing(null)} />}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ details */
+
+function GrnModal({ grn: g, onClose }) {
+  const basisStandardized = g.volume_basis === 'STANDARDIZED';
+
+  return (
+    <Modal
+      show
+      onClose={onClose}
+      title="Goods receipt"
+      subtitle={g.reference}
+      icon="bi-box-arrow-in-down"
+      size="lg"
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Close</button>
+          <Link to={`/procurement/purchase-orders/${g.purchase_order}`} className="btn btn-primary" onClick={onClose}>
+            <i className="bi bi-bag-check"></i>
+            View purchase order
+          </Link>
+        </>
+      }
+    >
+      <h6 className="modal-section-title">
+        <i className="bi bi-card-text" aria-hidden="true"></i>Receipt Details
+      </h6>
+      <KV items={[
+        ['Reference', g.reference],
+        ['Status', g.status],
+        ['Receipt date', g.receipt_date],
+        ['Purchase order', g.purchase_order_label || g.purchase_order],
+        ['Product / line', g.line_label || '—'],
+        ['Depot', g.depot_label || '—'],
+        ['Tank', g.tank_label || '—'],
+        ['Delivery note', g.delivery_note || '—'],
+        ['Vehicle reg', g.vehicle_reg || '—'],
+      ]} />
+
+      <h6 className="modal-section-title">
+        <i className="bi bi-thermometer-half" aria-hidden="true"></i>Volume & Measurement
+      </h6>
+      <KV items={[
+        ['Observed volume (L)', num(g.observed_volume, 3)],
+        ['Standardized volume (L)', num(g.standardized_volume, 3)],
+        ['Temperature (°C)', num(g.temperature_c, 2)],
+        ['Density', num(g.density, 4)],
+        ['Quantity basis', g.volume_basis],
+        ['Quantity booked (L)', num(g.quantity, 3)],
+      ]} />
+      <p className="text-muted-soft mt-2" style={{ fontSize: '0.8125rem' }}>
+        {basisStandardized
+          ? 'Stock was booked on the standardized volume.'
+          : 'Stock was booked on the observed volume (no standardized volume was entered).'}
+      </p>
+
+      <h6 className="modal-section-title">
+        <i className="bi bi-cash-coin" aria-hidden="true"></i>Cost
+      </h6>
+      <KV items={[
+        ['Unit cost (functional)', num(g.unit_cost, 6)],
+        ['Total cost (functional)', num(g.total_cost, 2)],
+      ]} />
+      <p className="text-muted-soft mt-2 mb-0" style={{ fontSize: '0.8125rem' }}>
+        Posted as Dr Inventory / Cr GRNI. The supplier invoice clears GRNI when it is posted.
+      </p>
+    </Modal>
   );
 }

@@ -176,6 +176,9 @@ class Line(models.Model):
     class Meta:
         abstract = True
 
+    def __str__(self):
+        return str(self.product)
+
     def save(self, *a, **kw):
         self.line_total = q2(self.quantity * self.unit_price)
         self.tax_amount = q2(self.line_total * self.tax_rate / 100)

@@ -7,6 +7,8 @@
  *                                       receipt_date?, delivery_note?, vehicle_reg? }
  *   /purchase-orders/:id/cancel/
  *   /purchase-requisitions/?status=APPROVED   (requisition picker on the create form)
+ *   /approvals/?doc_type=PurchaseOrder&status=PENDING   (finds the pending request while AWAITING_APPROVAL)
+ *   /approvals/:id/approve/  /approvals/:id/reject/     { comment }
  *
  * Route can be either .../purchase-orders/:id or .../purchase-orders/new → if no id, show create form.
  *
@@ -366,9 +368,11 @@ function POForm({ po, onSaved, onCancel }) {
 /* ------------------------------------------------------------------ view */
 
 function EditPO({ id }) {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const { notify } = useApp();
   const [po, setPo] = useState(null);
+  const [approval, setApproval] = useState(null);
+  const [deciding, setDeciding] = useState(null);   // 'approve' | 'reject' | null
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [receiving, setReceiving] = useState(null);
@@ -377,7 +381,16 @@ function EditPO({ id }) {
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      setPo(await api.purchaseOrders.get(id));
+      const p = await api.purchaseOrders.get(id);
+      setPo(p);
+      if (p.status === 'AWAITING_APPROVAL') {
+        const reqs = await api.approvals
+          .listAll({ doc_type: 'PurchaseOrder', status: 'PENDING', company: p.company })
+          .catch(() => []);
+        setApproval(reqs.find((r) => String(r.object_id) === String(p.id)) || null);
+      } else {
+        setApproval(null);
+      }
     } catch (err) { setError(errorMessage(err)); }
     finally { setLoading(false); }
   }, [id]);
@@ -424,8 +437,20 @@ function EditPO({ id }) {
     catch (err) { notify(errorMessage(err), 'error'); }
   };
 
+  const decide = async (comment) => {
+    try {
+      if (deciding === 'approve') await api.approvals.approve(approval.id, comment);
+      else await api.approvals.reject(approval.id, comment);
+      notify(deciding === 'approve' ? 'Purchase order approved.' : 'Purchase order rejected and returned to draft.', 'success');
+      setDeciding(null);
+      load();
+    } catch (err) { notify(errorMessage(err), 'error'); setDeciding(null); }
+  };
+
   const lines = po.lines || [];
   const canEdit = can('procurement.edit');
+  // the person who submitted the request cannot approve it (the server enforces this too)
+  const canDecide = po.status === 'AWAITING_APPROVAL' && approval && approval.created_by !== user?.id;
 
   return (
     <div>
@@ -458,6 +483,18 @@ function EditPO({ id }) {
               <i className="bi bi-send"></i>
               Submit
             </button>
+          )}
+          {canDecide && (
+            <>
+              <button className="btn btn-outline-danger" onClick={() => setDeciding('reject')}>
+                <i className="bi bi-x-octagon"></i>
+                Reject
+              </button>
+              <button className="btn btn-success" onClick={() => setDeciding('approve')}>
+                <i className="bi bi-check-circle"></i>
+                Approve
+              </button>
+            </>
           )}
           {po.status === 'APPROVED' && can('inventory.edit') && (
             <button className="btn btn-primary" onClick={() => setReceiving(lines[0] || null)}>
@@ -533,6 +570,15 @@ function EditPO({ id }) {
         )}
       </section>
 
+      {deciding && (
+        <DecisionModal
+          po={po}
+          approving={deciding === 'approve'}
+          onClose={() => setDeciding(null)}
+          onSubmit={decide}
+        />
+      )}
+
       {receiving && (
         <ReceiveModal
           po={po}
@@ -542,6 +588,57 @@ function EditPO({ id }) {
         />
       )}
     </div>
+  );
+}
+
+function DecisionModal({ po, approving, onClose, onSubmit }) {
+  const [comment, setComment] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    await onSubmit(comment);
+    setBusy(false);
+  };
+
+  return (
+    <Modal
+      show
+      onClose={onClose}
+      title={approving ? 'Approve purchase order' : 'Reject purchase order'}
+      subtitle={po.reference}
+      icon={approving ? 'bi-check-circle' : 'bi-x-octagon'}
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className={`btn ${approving ? 'btn-success' : 'btn-danger'}`} type="submit" form="decisionForm" disabled={busy}>
+            <i className={`bi ${approving ? 'bi-check-lg' : 'bi-x-lg'}`}></i>
+            {busy ? 'Saving...' : approving ? 'Approve' : 'Reject'}
+          </button>
+        </>
+      }
+    >
+      <form id="decisionForm" onSubmit={submit}>
+        <p className="mb-3">
+          {po.supplier_label || po.supplier} · {fmtMoney(po.total, po.currency)}
+        </p>
+        <Field label={approving ? 'Comment (optional)' : 'Reason for rejection'} required={!approving}>
+          <textarea
+            className="form-control"
+            rows={3}
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            required={!approving}
+          />
+        </Field>
+        {!approving && (
+          <p className="text-muted-soft mt-3 mb-0" style={{ fontSize: '0.8125rem' }}>
+            A rejected order goes back to draft so it can be edited and submitted again.
+          </p>
+        )}
+      </form>
+    </Modal>
   );
 }
 
