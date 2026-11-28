@@ -1,13 +1,14 @@
 /**
  * Shipment detail - the operations cockpit.
  *
- * Tabs: Overview | Loading | Documents | Trip Expenses | Delivery | Financial Summary | Activity Log
+ * Tabs: Overview | Loading | Tracking | Documents | Trip Expenses | Delivery | Financial Summary | Activity Log
  *
  * Endpoints used:
  *   /shipments/:id/ (detail + lines)         PUT = edit header + replace lines (DRAFT only) | DELETE = delete a DRAFT
  *   /shipments/:id/submit/  update-status/  record-loading/  record-delivery/  cost/  cost-sheets/  fuel/
  *   /shipments/:id/compliance/               vehicle / driver / truck readiness checklist
  *   /shipments/:id/timeline/  history/       status history and audit trail
+ *   /shipment-positions/                     position reports for the Tracking tab (map)
  *   /shipment-documents/                     documents (list / upload / delete)
  *   /shipment-deliveries/?shipment=          deliveries
  *   /trip-advances/                          trip budget -> advance -> reconciliation
@@ -23,10 +24,12 @@ import api, { errorMessage, fieldErrors } from '../../services/api';
 import Modal from '../../components/Modal';
 import Field from '../../components/Field';
 import TableSkeleton from '../../components/TableSkeleton';
+import ShipmentTrackingTab from '../../components/ShipmentTrackingTab';
 
 const TABS = [
   { key: 'overview', label: 'Overview', icon: 'bi-info-circle' },
   { key: 'loading', label: 'Loading', icon: 'bi-box-arrow-in-down' },
+  { key: 'tracking', label: 'Tracking', icon: 'bi-pin-map' },
   { key: 'documents', label: 'Documents', icon: 'bi-paperclip' },
   { key: 'trip', label: 'Trip Expenses', icon: 'bi-wallet2' },
   { key: 'delivery', label: 'Delivery', icon: 'bi-geo-alt' },
@@ -351,6 +354,9 @@ export default function ShipmentDetail() {
         <Overview s={s} lines={lines} fuel={fuel} order={order} deliveries={deliveries} compliance={compliance} maintenance={maintenance} />
       )}
       {tab === 'loading' && <LoadingTab shipment={s} lines={lines} onChanged={load} canEdit={can('shipments.edit')} />}
+      {tab === 'tracking' && (
+        <ShipmentTrackingTab shipment={s} timeline={timeline} canEdit={can('shipments.edit')} onChanged={load} />
+      )}
       {tab === 'documents' && <DocumentsTab shipment={s} documents={documents} onChanged={load} canEdit={canWork} />}
       {tab === 'trip' && (
         <TripExpensesTab shipment={s} advances={advances} expenses={expenses} onChanged={load} canEdit={canWork} user={user} />

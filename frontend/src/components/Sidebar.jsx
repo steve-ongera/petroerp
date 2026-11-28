@@ -162,7 +162,7 @@ export default function Sidebar({ isDesktop = true, collapsed = false, mobileOpe
       >
         <div className="app-sidebar__brand">
           <div className="app-sidebar__brand-inner">
-            <span className="app-sidebar__logo app-sidebar__logo--tile" aria-hidden="true">PE</span>
+            
             <span className="app-sidebar__brand-text">
               PetroERP
               <span className="app-sidebar__brand-sub">Group operations</span>

@@ -406,6 +406,8 @@ const shipments = {
 };
 const shipmentStatusHistory = readOnly('shipment-status-history');
 const shipmentStages = crud('shipment-stages');
+
+const shipmentPositions = crud('shipment-positions');
 const shipmentDocuments = {
   ...crud('shipment-documents'),
   /** data: { company, shipment, doc_type, number?, notes?, file: File } */
@@ -573,7 +575,6 @@ const ai = {
 };
 
 // ------------------------------------------------------------------ public surface
-
 const api = {
   auth,
   // administration & company
@@ -592,7 +593,7 @@ const api = {
   vehicles, trailers, drivers, vehicleAssignments, vehicleMaintenance, vehicleExpenses, vehicleDocuments,
   transporters, transporterContracts, transporterRates, transporterVehicles, transportBookings, transporterInvoices,
   // shipments & customs
-  shipments, shipmentStatusHistory, shipmentStages, shipmentDocuments, shipmentDeliveries, shipmentAllocations, costSheets,
+  shipments, shipmentStatusHistory, shipmentStages, shipmentPositions, shipmentDocuments, shipmentDeliveries, shipmentAllocations, costSheets,
   exportDeclarations, complianceChecks, tripAdvances,
   // finance
   expenseCategories, expenses, payments, bankAccounts, bankTransactions, bankReconciliations, accounts, journals,
