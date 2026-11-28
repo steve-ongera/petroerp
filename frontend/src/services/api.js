@@ -494,7 +494,15 @@ const fixedAssets = {
   dispose: (id, b) => post(`/fixed-assets/${id}/dispose/`, b),
   transfer: (id, location) => post(`/fixed-assets/${id}/transfer/`, { location }),
 };
-const employees = crud('employees');
+
+const employees = {
+   ...crud('employees'),
+   profile: (id) => get(`/employees/${id}/profile/`),
+   availableUsers: (id) => get(`/employees/${id}/available-users/`),
+   linkUser: (id, user) => post(`/employees/${id}/link-user/`, { user }),
+ };
+
+
 const leaveRequests = withStatus('leave-requests', crud('leave-requests'));
 const payrollConfigs = crud('payroll-configs');
 const payrollRuns = {

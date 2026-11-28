@@ -2,6 +2,7 @@
  * PetroERP - application shell.
  *
  *  - Routes are generated from src/navigation.js (menu + detail routes) so the sidebar and the router never drift apart.
+ *    New pages (for example finance/Employees) only need an entry in navigation.js; nothing changes here.
  *  - Pages live in src/pages/<group>/<Name>.jsx and are code-split automatically (import.meta.glob). A page that has
  *    not been written yet shows a "not built" placeholder instead of breaking the build - add pages one group at a time.
  *  - <RequireAuth> sends anonymous users to /login; <Guard roles={...}> shows "no access" for pages the role cannot use.

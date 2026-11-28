@@ -11,7 +11,8 @@
  * (same idea as `allow()` in the HMIS App.jsx). Edit FULL_ACCESS_ROLES to change
  * who gets blanket access.
  *
- * Exports: visibleNav(can), flatNav(can), allRoutes(), firstAllowedPath(can), titleFor(pathname)
+ * Exports: visibleNav(can), flatNav(can), allRoutes(), firstAllowedPath(can), titleFor(pathname),
+ *          EMPLOYEES_EDIT, EMPLOYEES_LINK, EMPLOYEES_PAYSLIPS (used inside the Employees page)
  * Pure data + helpers. No JSX.
  */
 import { ROLES } from './utils/roles';
@@ -51,6 +52,12 @@ const REPORTS      = allow(MD, KFM, DFM, ACC, PM, SM, FLM, LM, RO, AUD);
 const AI           = allow(MD, KFM, DFM, AUD);
 const AUDIT        = allow(MD, AUD);
 const USERS        = allow(MD, AUD);
+
+// Employees: salary and bank data are sensitive, so the page follows the payroll roles.
+const EMPLOYEES = PAYROLL;                       // can open the page and see the list
+export const EMPLOYEES_EDIT = allow(MD, KFM, DFM);   // add / edit / delete employees
+export const EMPLOYEES_LINK = allow(MD);             // link / unlink a user account
+export const EMPLOYEES_PAYSLIPS = PAYROLL;           // see salary, bank details and payslips
 
 export const ICON_KEYS = {
   dashboard: 'dashboard',
@@ -120,13 +127,14 @@ const NAV = [
   ]},
 
   { group: 'Finance', icon: ICON_KEYS.finance, items: [
-    { label: 'Expenses',     path: '/finance/expenses', roles: EXPENSES, page: 'finance/Expenses' },
-    { label: 'Payments',     path: '/finance/payments', roles: PAYMENTS, page: 'finance/Payments' },
-    { label: 'Bank',         path: '/finance/bank',     roles: PAYMENTS, page: 'finance/Bank' },
-    { label: 'Accounts',     path: '/finance/accounts', roles: FINANCE,  page: 'finance/Accounts' },
-    { label: 'Journals',     path: '/finance/journals', roles: FINANCE,  page: 'finance/Journals' },
-    { label: 'Fixed assets', path: '/finance/assets',   roles: ASSETS,   page: 'finance/FixedAssets' },
-    { label: 'Payroll',      path: '/finance/payroll',  roles: PAYROLL,  page: 'finance/Payroll' },
+    { label: 'Expenses',     path: '/finance/expenses',  roles: EXPENSES,  page: 'finance/Expenses' },
+    { label: 'Payments',     path: '/finance/payments',  roles: PAYMENTS,  page: 'finance/Payments' },
+    { label: 'Bank',         path: '/finance/bank',      roles: PAYMENTS,  page: 'finance/Bank' },
+    { label: 'Accounts',     path: '/finance/accounts',  roles: FINANCE,   page: 'finance/Accounts' },
+    { label: 'Journals',     path: '/finance/journals',  roles: FINANCE,   page: 'finance/Journals' },
+    { label: 'Fixed assets', path: '/finance/assets',    roles: ASSETS,    page: 'finance/FixedAssets' },
+    { label: 'Employees',    path: '/finance/employees', roles: EMPLOYEES, page: 'finance/Employees' },
+    { label: 'Payroll',      path: '/finance/payroll',   roles: PAYROLL,   page: 'finance/Payroll' },
   ]},
 
   { group: 'Group', icon: ICON_KEYS.group, items: [
