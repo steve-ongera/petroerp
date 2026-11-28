@@ -713,6 +713,44 @@ class VehicleViewSet(make_viewset(m.Vehicle, search=('make', 'model'), filters_=
         keys = ['vehicle', 'trips', 'km', 'operating_cost', 'cost_per_km', 'cost_per_trip', 'cost_per_delivered_litre', 'revenue', 'profit']
         return Response(dict(zip(keys, row)) if row else {})
 
+    @action(detail=True, methods=['get'])
+    def tracking(self, request, pk=None):
+        """
+        Shipments this vehicle has run (newest first) plus the status-history timeline of the shipment in focus.
+        Focus = ?shipment=<id>, else the active shipment, else the latest one.
+        The browser turns origin / destination / checkpoint names into map coordinates.
+        """
+        v = self.get_object()
+        not_trips = ('DRAFT', 'AWAITING_APPROVAL', 'CANCELLED')
+        ships = list(m.Shipment.objects.filter(vehicle=v).exclude(status__in=not_trips)
+                     .select_related('customer', 'product', 'driver', 'depot', 'border_crossing').order_by('-id')[:30])
+        active = next((s for s in ships if s.status in svc.ACTIVE_SHIPMENT), None)
+        wanted = request.query_params.get('shipment')
+        focus = next((s for s in ships if str(s.id) == str(wanted)), None) or active or (ships[0] if ships else None)
+
+        def row(s):
+            return {'id': s.id, 'reference': s.reference, 'status': s.status,
+                    'origin': s.origin, 'destination': s.destination, 'destination_county': s.destination_county,
+                    'depot': s.depot.name if s.depot_id else '',
+                    'border': s.border_crossing.name if s.border_crossing_id else '',
+                    'customer': str(s.customer) if s.customer_id else '', 'product': s.product.name,
+                    'driver': s.driver.full_name if s.driver_id else '',
+                    'litres': s.loading_quantity or s.quantity, 'distance_km': s.distance_km,
+                    'loading_date': s.loading_date, 'dispatched_at': s.dispatched_at,
+                    'expected_delivery': s.expected_delivery, 'actual_delivery': s.actual_delivery}
+
+        timeline = []
+        if focus:
+            timeline = [{'at': h.changed_at, 'status': h.new_status, 'location': h.location, 'comments': h.comments}
+                        for h in m.ShipmentStatusHistory.objects.filter(shipment=focus).order_by('changed_at', 'id')]
+        return Response({
+            'vehicle': {'id': v.id, 'registration_number': v.registration_number, 'make': v.make, 'model': v.model,
+                        'status': v.status},
+            'shipments': [row(s) for s in ships],
+            'active_id': active.id if active else None,
+            'focus_id': focus.id if focus else None,
+            'timeline': timeline,
+        })
 
 reg('trailers', m.Trailer)
 

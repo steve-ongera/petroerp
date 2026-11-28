@@ -1792,3 +1792,21 @@ class EliminationJournal(models.Model):
     debit = Money()
     credit = Money()
     ic_transaction = OFK('IntercompanyTransaction')
+
+
+
+
+class ShipmentPosition(Stamped):
+    """Position report for a shipment's truck: typed place, map pick or phone GPS. No tracker needed."""
+    company = FK('Company')
+    shipment = FK('Shipment')
+    recorded_at = models.DateTimeField(default=timezone.now)
+    location = Char(160)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    source = Choice('MANUAL PHONE DEVICE', default='MANUAL')
+    notes = Char(255)
+
+    class Meta:
+        ordering = ['recorded_at', 'id']
+        indexes = [models.Index(fields=['shipment', 'recorded_at'])]
