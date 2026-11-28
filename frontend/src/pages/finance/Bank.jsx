@@ -17,7 +17,7 @@ import Pagination, { usePagination } from '../../components/Pagination';
 import TableSkeleton from '../../components/TableSkeleton';
 
 const fmtMoney = (n, c = '') => {
-  if (n == null || n === '') return '—';
+  if (n == null || n === '') return 'â€”';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -89,7 +89,7 @@ export default function Bank() {
           <div className="page-header__text">
             <h1 className="page-title">Bank & cash</h1>
             <p className="page-subtitle">
-              Accounts, statement import, reconciliation{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
+              Accounts, statement import, reconciliation{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -167,9 +167,9 @@ export default function Bank() {
               </div>
               <div style={{ padding: 16 }}>
                 <div className="kv">
-                  <div className="kv__item"><div className="kv__label">Book balance (today)</div><div className="kv__value fw-600">{balance ? fmtMoney(balance.book_balance, balance.currency) : '—'}</div></div>
-                  <div className="kv__item"><div className="kv__label">Bank</div><div className="kv__value">{selected.bank_name || '—'}</div></div>
-                  <div className="kv__item"><div className="kv__label">Account number</div><div className="kv__value cell-mono">{selected.account_number || '—'}</div></div>
+                  <div className="kv__item"><div className="kv__label">Book balance (today)</div><div className="kv__value fw-600">{balance ? fmtMoney(balance.book_balance, balance.currency) : 'â€”'}</div></div>
+                  <div className="kv__item"><div className="kv__label">Bank</div><div className="kv__value">{selected.bank_name || 'â€”'}</div></div>
+                  <div className="kv__item"><div className="kv__label">Account number</div><div className="kv__value cell-mono">{selected.account_number || 'â€”'}</div></div>
                   <div className="kv__item"><div className="kv__label">GL account</div><div className="kv__value">{selected.gl_account_label || selected.gl_account}</div></div>
                 </div>
               </div>
@@ -263,7 +263,7 @@ function TransactionsTable({ rows, onMatch, onIgnore }) {
                 <tr key={t.id}>
                   <td>{t.txn_date}</td>
                   <td className="cell-name" style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.description}</td>
-                  <td className="cell-mono">{t.reference || '—'}</td>
+                  <td className="cell-mono">{t.reference || 'â€”'}</td>
                   <td className="cell-num">{fmtMoney(t.money_in)}</td>
                   <td className="cell-num">{fmtMoney(t.money_out)}</td>
                   <td><span className={`status-pill ${TXN_PILL[t.status] || 'status-pill--neutral'}`}>{t.status}</span></td>
@@ -449,7 +449,7 @@ function MatchModal({ txn, onClose, onDone }) {
       show
       onClose={onClose}
       title="Match statement line"
-      subtitle={`${txn.txn_date} · ${fmtMoney(amount)}`}
+      subtitle={`${txn.txn_date} Â· ${fmtMoney(amount)}`}
       icon="bi-link-45deg"
       footer={
         <>
@@ -462,8 +462,8 @@ function MatchModal({ txn, onClose, onDone }) {
     >
       <form id="matchForm" onSubmit={submit}>
         <div className="kv">
-          <div className="kv__item"><div className="kv__label">Description</div><div className="kv__value">{txn.description || '—'}</div></div>
-          <div className="kv__item"><div className="kv__label">Reference</div><div className="kv__value cell-mono">{txn.reference || '—'}</div></div>
+          <div className="kv__item"><div className="kv__label">Description</div><div className="kv__value">{txn.description || 'â€”'}</div></div>
+          <div className="kv__item"><div className="kv__label">Reference</div><div className="kv__value cell-mono">{txn.reference || 'â€”'}</div></div>
         </div>
         <div className="form-grid mt-3">
           <Field label="Posted payment ID" required span>

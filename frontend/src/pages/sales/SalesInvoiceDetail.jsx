@@ -12,7 +12,7 @@ import { SectionHeader, SectionBody, KV, EmptyState } from '../../components/Pag
 import { invoiceStatusPill } from './SalesInvoices';
 
 const fmtMoney = (n, c = '') => {
-  if (n == null || n === '') return '—';
+  if (n == null || n === '') return 'â€”';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -109,13 +109,13 @@ function CreateSI({ onCreated, onCancel }) {
             <div className="form-grid">
               <Field label="Customer" required err={fieldErr.customer}>
                 <select className="form-select" value={form.customer} onChange={set('customer')} required>
-                  <option value="">—</option>
-                  {customers.map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}
+                  <option value="">â€”</option>
+                  {customers.map((c) => <option key={c.id} value={c.id}>{c.code} Â· {c.name}</option>)}
                 </select>
               </Field>
               <Field label="Sales order" err={fieldErr.sales_order}>
                 <select className="form-select" value={form.sales_order} onChange={set('sales_order')}>
-                  <option value="">—</option>
+                  <option value="">â€”</option>
                   {orders.map((o) => <option key={o.id} value={o.id}>{o.reference}</option>)}
                 </select>
               </Field>
@@ -158,8 +158,8 @@ function CreateSI({ onCreated, onCancel }) {
                     <tr key={i}>
                       <td>
                         <select className="form-select" value={l.product} onChange={(e) => setLine(i, 'product', e.target.value)}>
-                          <option value="">—</option>
-                          {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
+                          <option value="">â€”</option>
+                          {products.map((p) => <option key={p.id} value={p.id}>{p.code} Â· {p.name}</option>)}
                         </select>
                       </td>
                       <td><input type="number" step="0.001" className="form-control num" value={l.quantity} onChange={(e) => setLine(i, 'quantity', e.target.value)} /></td>
@@ -252,7 +252,7 @@ function EditSI({ id }) {
               <span className={`status-pill ${invoiceStatusPill(inv.status)}`}>{inv.status.replace('_', ' ')}</span>
             </h1>
             <p className="page-subtitle">
-              {inv.customer_label || inv.customer} · {fmtMoney(inv.total, inv.currency)} · outstanding {fmtMoney(inv.outstanding)}
+              {inv.customer_label || inv.customer} Â· {fmtMoney(inv.total, inv.currency)} Â· outstanding {fmtMoney(inv.outstanding)}
             </p>
           </div>
         </div>
@@ -276,10 +276,10 @@ function EditSI({ id }) {
           <KV items={[
             ['Customer', inv.customer_label || inv.customer],
             ['Invoice date', inv.invoice_date],
-            ['Due date', inv.due_date || '—'],
-            ['Sales order', inv.sales_order_label || '—'],
+            ['Due date', inv.due_date || 'â€”'],
+            ['Sales order', inv.sales_order_label || 'â€”'],
             ['Currency', inv.currency || 'functional'],
-            ['Exchange rate', inv.exchange_rate || '—'],
+            ['Exchange rate', inv.exchange_rate || 'â€”'],
           ]} />
         </SectionBody>
       </section>

@@ -14,7 +14,7 @@ import { ServerPagination } from './Customers';
 
 const STATUSES = ['DRAFT', 'AWAITING_APPROVAL', 'APPROVED', 'IN_FULFILMENT', 'COMPLETED', 'CANCELLED'];
 const fmtMoney = (n, c = '') => {
-  if (n == null || n === '') return '—';
+  if (n == null || n === '') return 'â€”';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -180,7 +180,7 @@ export default function SalesOrders() {
                       </td>
                       <td className="cell-name">{so.customer_label || so.customer}</td>
                       <td>{so.order_date}</td>
-                      <td>{so.required_date || '—'}</td>
+                      <td>{so.required_date || 'â€”'}</td>
                       <td className="cell-num">{fmtMoney(so.total, so.currency)}</td>
                       <td><span className={`status-pill ${orderStatusPill(so.status)}`}>{so.status.replace('_', ' ')}</span></td>
                       <td>

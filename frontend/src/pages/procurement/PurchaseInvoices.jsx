@@ -29,7 +29,7 @@ const INVOICEABLE_PO = ['PARTIALLY_RECEIVED', 'RECEIVED'];
 const COUNTED_INVOICE = ['POSTED', 'PART_PAID', 'PAID'];
 
 const fmtMoney = (n, c = '') => {
-  if (n == null || n === '') return '—';
+  if (n == null || n === '') return 'â€”';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -105,7 +105,7 @@ export default function PurchaseInvoices() {
     setActionError(null); setBusyId(inv.id);
     try {
       const r = await api.purchaseInvoices.match(inv.id);
-      notify(`Match: ${r.match_status}${r.notes ? ` — ${r.notes}` : ''}`, r.match_status === 'MATCHED' ? 'success' : 'warning', 9000);
+      notify(`Match: ${r.match_status}${r.notes ? ` Â· ${r.notes}` : ''}`, r.match_status === 'MATCHED' ? 'success' : 'warning', 9000);
       load();
     } catch (err) { showError(inv, 'match failed', errorMessage(err)); }
     finally { setBusyId(null); }
@@ -537,13 +537,13 @@ function InvoiceModal({ row, companyParams, onClose, onSaved }) {
           <Field label="Purchase order" required err={fieldErr.purchase_order} span>
             <>
               <select className="form-select" value={form.purchase_order} onChange={(e) => pickPO(e.target.value)} required disabled={loadingPO}>
-                <option value="">—</option>
+                <option value="">â€”</option>
                 {form.purchase_order && !pos.some((p) => String(p.id) === String(form.purchase_order)) && (
                   <option value={form.purchase_order}>{row.purchase_order_label || po?.reference || form.purchase_order}</option>
                 )}
                 {pos.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.reference} · {p.supplier_label || p.supplier} · {p.status.replace(/_/g, ' ')}
+                    {p.reference} Â· {p.supplier_label || p.supplier} Â· {p.status.replace(/_/g, ' ')}
                   </option>
                 ))}
               </select>
@@ -561,8 +561,8 @@ function InvoiceModal({ row, companyParams, onClose, onSaved }) {
         {po && (
           <div className="alert alert-info mt-3 mb-0" role="status">
             <div>
-              <strong>{po.reference}</strong> · {po.supplier_label || po.supplier} · {po.currency || 'functional currency'} ·
-              payment terms {po.payment_terms_days} days · order total {fmtMoney(po.total, po.currency)}
+              <strong>{po.reference}</strong> Â· {po.supplier_label || po.supplier} Â· {po.currency || 'functional currency'} ï¿½
+              payment terms {po.payment_terms_days} days Â· order total {fmtMoney(po.total, po.currency)}
             </div>
           </div>
         )}
@@ -571,8 +571,8 @@ function InvoiceModal({ row, companyParams, onClose, onSaved }) {
         <div className="form-grid">
           <Field label="Supplier" required err={fieldErr.supplier}>
             <select className="form-select" value={form.supplier} onChange={(e) => changeSupplier(e.target.value)} required>
-              <option value="">—</option>
-              {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}
+              <option value="">â€”</option>
+              {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} Â· {s.name}</option>)}
             </select>
           </Field>
           <Field label="Supplier invoice #" required err={fieldErr.supplier_invoice_no}>
@@ -617,16 +617,16 @@ function InvoiceModal({ row, companyParams, onClose, onSaved }) {
                     <tr key={i}>
                       <td>
                         <select className="form-select" value={l.po_line} onChange={(e) => pickLine(i, e.target.value)} disabled={!po}>
-                          <option value="">—</option>
+                          <option value="">â€”</option>
                           {poLines.map((x) => (
                             <option key={x.id} value={x.id}>
-                              {x.product_label || x.product} · ordered {fmtQty(x.quantity)} · received {fmtQty(x.received_quantity)}
+                              {x.product_label || x.product} Â· ordered {fmtQty(x.quantity)} Â· received {fmtQty(x.received_quantity)}
                             </option>
                           ))}
                         </select>
                         {pl && (
                           <div className="text-muted-soft" style={{ fontSize: '0.75rem' }}>
-                            Already invoiced: {fmtQty(invoicedBefore[pl.id])} L · PO price {Number(pl.unit_price).toFixed(6)}
+                            Already invoiced: {fmtQty(invoicedBefore[pl.id])} L Â· PO price {Number(pl.unit_price).toFixed(6)}
                           </div>
                         )}
                       </td>

@@ -18,7 +18,7 @@ const CATEGORIES = ['TRUCK', 'TRAILER', 'DEPOT', 'TANK', 'EQUIPMENT', 'OFFICE', 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
 const fmtMoney = (n) => {
-  if (n == null || n === '') return '—';
+  if (n == null || n === '') return 'â€”';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
@@ -73,7 +73,7 @@ export default function FixedAssets() {
           <div className="page-header__text">
             <h1 className="page-title">Fixed assets</h1>
             <p className="page-subtitle">
-              {activeCompanyObj ? activeCompanyObj.name : 'All entities'} · {rows.length} asset{rows.length !== 1 ? 's' : ''}
+              {activeCompanyObj ? activeCompanyObj.name : 'All entities'} Â· {rows.length} asset{rows.length !== 1 ? 's' : ''}
             </p>
           </div>
         </div>
@@ -369,8 +369,8 @@ function DisposeModal({ asset, bankAccounts, onClose, onDone }) {
           </Field>
           <Field label="Bank / cash account" required span>
             <select className="form-select" value={form.bank_account} onChange={set('bank_account')} required>
-              <option value="">—</option>
-              {bankAccounts.map((b) => <option key={b.id} value={b.id}>{b.name} · {b.currency}</option>)}
+              <option value="">â€”</option>
+              {bankAccounts.map((b) => <option key={b.id} value={b.id}>{b.name} Â· {b.currency}</option>)}
             </select>
           </Field>
         </div>

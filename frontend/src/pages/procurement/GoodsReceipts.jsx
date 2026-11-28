@@ -1,5 +1,5 @@
 /**
- * Goods receipts — read-only (created by PO receive action).
+ * Goods receipts Â· read-only (created by PO receive action).
  * - GET /goods-receipts/   readOnly, filter by purchase_order
  * - "View" opens the receipt details (measurements, tank, cost) with a link back to the purchase order.
  */
@@ -12,7 +12,7 @@ import Pagination, { usePagination } from '../../components/Pagination';
 import TableSkeleton from '../../components/TableSkeleton';
 import { KV } from '../../components/PageSection';
 
-const num = (v, d = 0) => (v == null || v === '' ? '—'
+const num = (v, d = 0) => (v == null || v === '' ? 'â€”'
   : Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }));
 
 export default function GoodsReceipts() {
@@ -61,7 +61,7 @@ export default function GoodsReceipts() {
           <div className="page-header__text">
             <h1 className="page-title">Goods receipts</h1>
             <p className="page-subtitle">
-              Received stock{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
+              Received stock{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -169,12 +169,12 @@ export default function GoodsReceipts() {
                       <td className="cell-mono text-brand fw-600">{g.reference}</td>
                       <td>{g.receipt_date}</td>
                       <td className="cell-mono">{g.purchase_order_label || g.purchase_order}</td>
-                      <td className="cell-name">{g.line_label || '—'}</td>
+                      <td className="cell-name">{g.line_label || 'â€”'}</td>
                       <td className="cell-num">{Number(g.quantity).toLocaleString()}</td>
                       <td><span className="badge badge-neutral">{g.volume_basis}</span></td>
                       <td className="cell-num">{Number(g.unit_cost).toFixed(6)}</td>
                       <td className="cell-num">{Number(g.total_cost).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                      <td className="cell-mono">{g.vehicle_reg || '—'}</td>
+                      <td className="cell-mono">{g.vehicle_reg || 'â€”'}</td>
                       <td><span className="status-pill status-pill--info">{g.status}</span></td>
                       <td>
                         <button
@@ -234,11 +234,11 @@ function GrnModal({ grn: g, onClose }) {
         ['Status', g.status],
         ['Receipt date', g.receipt_date],
         ['Purchase order', g.purchase_order_label || g.purchase_order],
-        ['Product / line', g.line_label || '—'],
-        ['Depot', g.depot_label || '—'],
-        ['Tank', g.tank_label || '—'],
-        ['Delivery note', g.delivery_note || '—'],
-        ['Vehicle reg', g.vehicle_reg || '—'],
+        ['Product / line', g.line_label || 'â€”'],
+        ['Depot', g.depot_label || 'â€”'],
+        ['Tank', g.tank_label || 'â€”'],
+        ['Delivery note', g.delivery_note || 'â€”'],
+        ['Vehicle reg', g.vehicle_reg || 'â€”'],
       ]} />
 
       <h6 className="modal-section-title">
@@ -247,7 +247,7 @@ function GrnModal({ grn: g, onClose }) {
       <KV items={[
         ['Observed volume (L)', num(g.observed_volume, 3)],
         ['Standardized volume (L)', num(g.standardized_volume, 3)],
-        ['Temperature (°C)', num(g.temperature_c, 2)],
+        ['Temperature (Â°C)', num(g.temperature_c, 2)],
         ['Density', num(g.density, 4)],
         ['Quantity basis', g.volume_basis],
         ['Quantity booked (L)', num(g.quantity, 3)],

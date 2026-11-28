@@ -70,7 +70,7 @@ export default function FiscalYears() {
           <div className="page-header__text">
             <h1 className="page-title">Fiscal years</h1>
             <p className="page-subtitle">
-              Year-end closing and monthly accounting periods{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
+              Year-end closing and monthly accounting periods{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -120,7 +120,7 @@ export default function FiscalYears() {
           <div className="table-wrap__header">
             <span className="panel-title">
               <i className="bi bi-calendar-week text-brand"></i>
-              {selectedYear ? `Periods · ${selectedYear.name}` : 'Periods'}
+              {selectedYear ? `Periods Â· ${selectedYear.name}` : 'Periods'}
             </span>
             {selectedYear && (
               <span className="chart-card__subtitle">{yearPeriods.length} period{yearPeriods.length !== 1 ? 's' : ''}</span>

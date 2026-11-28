@@ -36,7 +36,7 @@ const LEVEL_ICON = {
 };
 
 function fmtDateTime(v) {
-  if (!v) return '—';
+  if (!v) return 'â€”';
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString();
 }
@@ -190,7 +190,7 @@ export default function Notifications() {
         {count > PAGE_SIZE && (
           <div className="pagination pagination--bordered">
             <span className="pagination__info">
-              Page <strong>{page}</strong> of <strong>{pages}</strong> · {count} items
+              Page <strong>{page}</strong> of <strong>{pages}</strong> Â· {count} items
             </span>
             <div className="pagination__list">
               <button className="pagination__btn" disabled={page <= 1} onClick={() => setPage(page - 1)}>Prev</button>

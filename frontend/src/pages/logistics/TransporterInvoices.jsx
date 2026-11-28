@@ -14,7 +14,7 @@ import TableSkeleton from '../../components/TableSkeleton';
 const STATUSES = ['DRAFT', 'POSTED', 'PART_PAID', 'PAID', 'CANCELLED'];
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtMoney = (n) => {
-  if (n == null || n === '') return '—';
+  if (n == null || n === '') return 'â€”';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
@@ -72,7 +72,7 @@ export default function TransporterInvoices() {
           <div className="page-header__text">
             <h1 className="page-title">Transporter invoices</h1>
             <p className="page-subtitle">
-              Hire-cost invoices{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
+              Hire-cost invoices{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -283,13 +283,13 @@ function InvoiceModal({ row, companyParams, onClose, onSaved }) {
         <div className="form-grid">
           <Field label="Transporter" required err={fieldErr.transporter}>
             <select className="form-select" value={form.transporter} onChange={set('transporter')} required>
-              <option value="">—</option>
-              {transporters.map((t) => <option key={t.id} value={t.id}>{t.code} · {t.name}</option>)}
+              <option value="">â€”</option>
+              {transporters.map((t) => <option key={t.id} value={t.id}>{t.code} Â· {t.name}</option>)}
             </select>
           </Field>
           <Field label="Booking" required err={fieldErr.booking}>
             <select className="form-select" value={form.booking} onChange={set('booking')} required>
-              <option value="">—</option>
+              <option value="">â€”</option>
               {bookings
                 .filter((b) => !form.transporter || String(b.transporter) === String(form.transporter))
                 .map((b) => <option key={b.id} value={b.id}>{b.reference}</option>)}

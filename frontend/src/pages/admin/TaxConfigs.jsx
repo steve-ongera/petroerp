@@ -78,7 +78,7 @@ export default function TaxConfigs() {
           <div className="page-header__text">
             <h1 className="page-title">Tax configuration</h1>
             <p className="page-subtitle">
-              Effective-dated, professionally verified rates{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
+              Effective-dated, professionally verified rates{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>

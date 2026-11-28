@@ -187,7 +187,7 @@ export default function Contracts() {
                       <td><span className="badge badge-neutral">{r.pricing_method.replace('_', ' ')}</span></td>
                       <td className="cell-num">{Number(r.price_per_litre || 0).toFixed(6)}</td>
                       <td>{r.valid_from}</td>
-                      <td>{r.valid_to || '—'}</td>
+                      <td>{r.valid_to || 'â€”'}</td>
                       <td><span className={`status-pill ${statusPill(r.status)}`}>{r.status}</span></td>
                       <td>
                         {can('sales.edit') && (
@@ -280,14 +280,14 @@ function ContractModal({ row, customers, products, currencies, companyParams, on
         <div className="form-grid">
           <Field label="Customer" required err={fieldErr.customer}>
             <select className="form-select" value={form.customer} onChange={set('customer')} required>
-              <option value="">—</option>
-              {customers.map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}
+              <option value="">â€”</option>
+              {customers.map((c) => <option key={c.id} value={c.id}>{c.code} Â· {c.name}</option>)}
             </select>
           </Field>
           <Field label="Product" required err={fieldErr.product}>
             <select className="form-select" value={form.product} onChange={set('product')} required>
-              <option value="">—</option>
-              {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
+              <option value="">â€”</option>
+              {products.map((p) => <option key={p.id} value={p.id}>{p.code} Â· {p.name}</option>)}
             </select>
           </Field>
           <Field label="Contract quantity">
@@ -316,7 +316,7 @@ function ContractModal({ row, customers, products, currencies, companyParams, on
           </Field>
           <Field label="Currency">
             <select className="form-select" value={form.currency} onChange={set('currency')}>
-              <option value="">—</option>
+              <option value="">â€”</option>
               {currencies.map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
             </select>
           </Field>

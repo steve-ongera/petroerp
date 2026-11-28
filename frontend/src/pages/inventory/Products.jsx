@@ -1,5 +1,5 @@
 /**
- * Products (global master — scope=None on the API).
+ * Products (global master Â· scope=None on the API).
  * - CRUD /products/
  * Fields: code, name, category, unit, density_min/max, valuation_method, reference_temp_c,
  *         expansion_coefficient, min_margin_pct, status.
@@ -170,7 +170,7 @@ export default function Products() {
                       <td><span className="badge badge-neutral">{p.category}</span></td>
                       <td>{p.unit}</td>
                       <td>{p.valuation_method}</td>
-                      <td className="cell-num">{p.min_margin_pct != null ? Number(p.min_margin_pct).toFixed(3) : '—'}</td>
+                      <td className="cell-num">{p.min_margin_pct != null ? Number(p.min_margin_pct).toFixed(3) : 'â€”'}</td>
                       <td>
                         <span className={`status-pill ${p.status === 'ACTIVE' ? 'status-pill--success' : 'status-pill--neutral'}`}>
                           {p.status}
@@ -297,7 +297,7 @@ function ProductModal({ row, onClose, onSaved }) {
           <Field label="Density max">
             <input type="number" step="0.0001" className="form-control num" value={form.density_max} onChange={set('density_max')} />
           </Field>
-          <Field label="Reference temp (°C)">
+          <Field label="Reference temp (Â°C)">
             <input type="number" step="0.01" className="form-control num" value={form.reference_temp_c} onChange={set('reference_temp_c')} />
           </Field>
           <Field label="Expansion coefficient">

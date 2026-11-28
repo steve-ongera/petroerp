@@ -145,8 +145,8 @@ export default function Requisitions() {
                       <td className="cell-mono fw-600">{r.reference}</td>
                       <td className="cell-name">{r.product_label || r.product}</td>
                       <td className="cell-num">{Number(r.quantity || 0).toLocaleString()}</td>
-                      <td>{r.required_date || '—'}</td>
-                      <td className="text-truncate" style={{ maxWidth: 300 }}>{r.reason || '—'}</td>
+                      <td>{r.required_date || 'â€”'}</td>
+                      <td className="text-truncate" style={{ maxWidth: 300 }}>{r.reason || 'â€”'}</td>
                       <td><span className={`status-pill ${statusPill(r.status)}`}>{r.status}</span></td>
                       <td>
                         <div className="row-actions">
@@ -233,15 +233,15 @@ function RequisitionModal({ row, products, companies = [], companyParams, onClos
           {isNew && companies.length > 1 && (
             <Field label="Legal entity" required err={fieldErr.company}>
               <select className="form-select" value={form.company} onChange={set('company')} required>
-                <option value="">—</option>
-                {companies.map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}
+                <option value="">â€”</option>
+                {companies.map((c) => <option key={c.id} value={c.id}>{c.code} Â· {c.name}</option>)}
               </select>
             </Field>
           )}
           <Field label="Product" required err={fieldErr.product}>
             <select className="form-select" value={form.product} onChange={set('product')} required>
-              <option value="">—</option>
-              {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
+              <option value="">â€”</option>
+              {products.map((p) => <option key={p.id} value={p.id}>{p.code} Â· {p.name}</option>)}
             </select>
           </Field>
           <Field label="Quantity (litres)" required err={fieldErr.quantity}>

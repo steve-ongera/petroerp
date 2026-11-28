@@ -207,7 +207,7 @@ function CurrenciesTable({ rows, searching, onEdit, onDelete }) {
                 <tr key={c.code}>
                   <td className="cell-mono text-brand fw-600">{c.code}</td>
                   <td className="cell-name">{c.name}</td>
-                  <td>{c.symbol || '—'}</td>
+                  <td>{c.symbol || 'â€”'}</td>
                   <td className="cell-num">{c.decimal_places}</td>
                   <td>
                     <span className={`status-pill ${c.is_active ? 'status-pill--success' : 'status-pill--neutral'}`}>
@@ -401,13 +401,13 @@ function RateModal({ row, currencies, onClose, onSaved }) {
         <div className="form-grid">
           <Field label="From" required err={fieldErr.from_currency}>
             <select className="form-select" value={form.from_currency} onChange={set('from_currency')} required>
-              <option value="">—</option>
+              <option value="">â€”</option>
               {activeCurrencies.map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
             </select>
           </Field>
           <Field label="To" required err={fieldErr.to_currency}>
             <select className="form-select" value={form.to_currency} onChange={set('to_currency')} required>
-              <option value="">—</option>
+              <option value="">â€”</option>
               {activeCurrencies.map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
             </select>
           </Field>
@@ -422,7 +422,7 @@ function RateModal({ row, currencies, onClose, onSaved }) {
           </Field>
         </div>
         <p className="text-muted-soft mt-3">
-          1 unit of <strong>{form.from_currency || '…'}</strong> = <strong>{form.rate || '…'}</strong> {form.to_currency || '…'}.
+          1 unit of <strong>{form.from_currency || 'â€”'}</strong> = <strong>{form.rate || 'â€”'}</strong> {form.to_currency || 'â€”'}.
         </p>
         {error && <div className="alert alert-danger mt-3" role="alert">{error}</div>}
       </form>

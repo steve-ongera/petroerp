@@ -28,7 +28,7 @@ const TABS = [
 ];
 
 const fmtMoney = (n, c = '') => {
-  if (n == null || n === '') return '—';
+  if (n == null || n === '') return 'â€”';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -79,7 +79,7 @@ export default function SupplierDetail() {
               <span className={`status-pill ${supplierStatusPill(s.status)}`}>{s.status}</span>
             </h1>
             <p className="page-subtitle">
-              {s.code} · {s.country} · {s.payment_terms_days} days · credit limit {fmtMoney(s.credit_limit, s.currency)}
+              {s.code} Â· {s.country} Â· {s.payment_terms_days} days Â· credit limit {fmtMoney(s.credit_limit, s.currency)}
             </p>
           </div>
         </div>
@@ -128,14 +128,14 @@ function Overview({ s }) {
       <SectionHeader first icon="bi-info-circle" title="Supplier Details" />
       <SectionBody>
         <KV items={[
-          ['Tax PIN', s.tax_pin || '—'],
-          ['Registration', s.registration_number || '—'],
-          ['Contact person', s.contact_person || '—'],
-          ['Phone', s.phone || '—'],
-          ['Email', s.email || '—'],
-          ['Bank', s.bank_name || '—'],
-          ['Bank account', s.bank_account || '—'],
-          ['SWIFT', s.bank_swift || '—'],
+          ['Tax PIN', s.tax_pin || 'â€”'],
+          ['Registration', s.registration_number || 'â€”'],
+          ['Contact person', s.contact_person || 'â€”'],
+          ['Phone', s.phone || 'â€”'],
+          ['Email', s.email || 'â€”'],
+          ['Bank', s.bank_name || 'â€”'],
+          ['Bank account', s.bank_account || 'â€”'],
+          ['SWIFT', s.bank_swift || 'â€”'],
         ]} />
         {s.address && (
           <p className="text-muted-soft" style={{ marginTop: '1rem', marginBottom: 0 }}>
@@ -276,7 +276,7 @@ function PerformanceTab({ id }) {
             ['Orders', data.orders ?? 0],
             ['Litres ordered', Number(data.litres_ordered || 0).toLocaleString()],
             ['Litres received', Number(data.litres_received || 0).toLocaleString()],
-            ['Fill rate %', data.fill_rate_pct != null ? Number(data.fill_rate_pct).toFixed(2) : '—'],
+            ['Fill rate %', data.fill_rate_pct != null ? Number(data.fill_rate_pct).toFixed(2) : 'â€”'],
             ['Invoice match exceptions', data.invoice_match_exceptions ?? 0],
           ]} />
         </SectionBody>
@@ -334,9 +334,9 @@ function ContactsTab({ supplier, canEdit }) {
                   {rows.map((c) => (
                     <tr key={c.id}>
                       <td className="cell-name">{c.name}</td>
-                      <td>{c.position || '—'}</td>
-                      <td>{c.phone || '—'}</td>
-                      <td>{c.email || '—'}</td>
+                      <td>{c.position || 'â€”'}</td>
+                      <td>{c.phone || 'â€”'}</td>
+                      <td>{c.email || 'â€”'}</td>
                       <td>
                         {canEdit && (
                           <div className="row-actions">

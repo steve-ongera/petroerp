@@ -17,7 +17,7 @@ const STATUSES = ['DRAFT', 'AWAITING_APPROVAL', 'APPROVED', 'IN_TRANSIT', 'DELIV
 const RATE_BASIS = ['PER_LITRE', 'PER_TRIP'];
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtMoney = (n) => {
-  if (n == null || n === '') return '—';
+  if (n == null || n === '') return 'â€”';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
@@ -76,7 +76,7 @@ export default function Bookings() {
           <div className="page-header__text">
             <h1 className="page-title">Transport bookings</h1>
             <p className="page-subtitle">
-              Hired truck bookings{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
+              Hired truck bookings{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -304,13 +304,13 @@ function BookingModal({ row, companyParams, onClose, onSaved }) {
         <div className="form-grid">
           <Field label="Transporter" required err={fieldErr.transporter}>
             <select className="form-select" value={form.transporter} onChange={set('transporter')} required>
-              <option value="">—</option>
-              {transporters.map((t) => <option key={t.id} value={t.id}>{t.code} · {t.name}</option>)}
+              <option value="">â€”</option>
+              {transporters.map((t) => <option key={t.id} value={t.id}>{t.code} Â· {t.name}</option>)}
             </select>
           </Field>
           <Field label="Truck" required err={fieldErr.truck}>
             <select className="form-select" value={form.truck} onChange={set('truck')} required>
-              <option value="">—</option>
+              <option value="">â€”</option>
               {trucks
                 .filter((t) => !form.transporter || String(t.transporter) === String(form.transporter))
                 .map((t) => <option key={t.id} value={t.id}>{t.registration_number}</option>)}
@@ -321,8 +321,8 @@ function BookingModal({ row, companyParams, onClose, onSaved }) {
           </Field>
           <Field label="Product" required err={fieldErr.product}>
             <select className="form-select" value={form.product} onChange={set('product')} required>
-              <option value="">—</option>
-              {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
+              <option value="">â€”</option>
+              {products.map((p) => <option key={p.id} value={p.id}>{p.code} Â· {p.name}</option>)}
             </select>
           </Field>
           <Field label="Quantity (L)" required err={fieldErr.quantity}>
@@ -330,7 +330,7 @@ function BookingModal({ row, companyParams, onClose, onSaved }) {
           </Field>
           <Field label="Shipment (link)">
             <select className="form-select" value={form.shipment} onChange={set('shipment')}>
-              <option value="">—</option>
+              <option value="">â€”</option>
               {shipments.map((s) => <option key={s.id} value={s.id}>{s.reference}</option>)}
             </select>
           </Field>
@@ -366,7 +366,7 @@ function BookingModal({ row, companyParams, onClose, onSaved }) {
           </Field>
         </div>
         <p className="text-muted-soft mt-3" style={{ fontSize: '0.8125rem' }}>
-          Total charge is calculated server-side: {form.rate_basis === 'PER_LITRE' ? 'qty × rate' : 'flat rate'}.
+          Total charge is calculated server-side: {form.rate_basis === 'PER_LITRE' ? 'qty Â· rate' : 'flat rate'}.
         </p>
 
         {error && <div className="alert alert-danger mt-3" role="alert">{error}</div>}

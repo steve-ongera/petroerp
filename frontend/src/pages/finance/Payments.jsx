@@ -47,7 +47,7 @@ const PILL = {
 const pill = (s) => `status-pill ${PILL[s] || 'status-pill--neutral'}`;
 
 const fmtMoney = (n, c = '') => {
-  if (n == null || n === '') return '—';
+  if (n == null || n === '') return 'â€”';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -123,7 +123,7 @@ export default function Payments() {
           <div className="page-header__text">
             <h1 className="page-title">Payments</h1>
             <p className="page-subtitle">
-              Receipts and outgoing payments{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
+              Receipts and outgoing payments{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -250,7 +250,7 @@ export default function Payments() {
                         </span>
                       </td>
                       <td className="cell-name">
-                        {r.customer_label || r.supplier_label || r.transporter_label || r.payee || '—'}
+                        {r.customer_label || r.supplier_label || r.transporter_label || r.payee || 'â€”'}
                         <div className="text-muted-soft" style={{ fontSize: '0.8rem' }}>{r.party_type}</div>
                       </td>
                       <td className="cell-num">{fmtMoney(r.amount, r.currency)}</td>
@@ -496,10 +496,10 @@ function PaymentModal({ row, companyParams, onClose, onSaved }) {
                   className="form-select" value={invoice ? String(invoice.id) : ''} disabled={loadingData}
                   onChange={(e) => chooseInvoice(invoices.find((i) => String(i.id) === e.target.value) || null)}
                 >
-                  <option value="">{loadingData ? 'Loading...' : '— none —'}</option>
+                  <option value="">{loadingData ? 'Loading...' : 'ï¿½ none ï¿½'}</option>
                   {invoices.map((i) => (
                     <option key={i.id} value={i.id}>
-                      {i.reference} · {i.supplier_label || i.supplier} · {i.supplier_invoice_no} · owes {fmtMoney(i.outstanding, i.currency)}
+                      {i.reference} Â· {i.supplier_label || i.supplier} Â· {i.supplier_invoice_no} Â· owes {fmtMoney(i.outstanding, i.currency)}
                     </option>
                   ))}
                 </select>
@@ -511,8 +511,8 @@ function PaymentModal({ row, companyParams, onClose, onSaved }) {
             {invoice && (
               <div className="alert alert-info mt-3 mb-0" role="status">
                 <div>
-                  <strong>{invoice.reference}</strong> · due {invoice.due_date || '—'} · total {fmtMoney(invoice.total, invoice.currency)} ·
-                  paid {fmtMoney(invoice.amount_paid, invoice.currency)} · outstanding <strong>{fmtMoney(invoice.outstanding, invoice.currency)}</strong>
+                  <strong>{invoice.reference}</strong> Â· due {invoice.due_date || 'â€”'} Â· total {fmtMoney(invoice.total, invoice.currency)} ï¿½
+                  paid {fmtMoney(invoice.amount_paid, invoice.currency)} Â· outstanding <strong>{fmtMoney(invoice.outstanding, invoice.currency)}</strong>
                 </div>
               </div>
             )}
@@ -543,8 +543,8 @@ function PaymentModal({ row, companyParams, onClose, onSaved }) {
           {form.party_type === 'CUSTOMER' && (
             <Field label="Customer" required err={fieldErr.customer} span>
               <select className="form-select" value={form.customer} onChange={set('customer')} required>
-                <option value="">—</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}
+                <option value="">â€”</option>
+                {customers.map((c) => <option key={c.id} value={c.id}>{c.code} Â· {c.name}</option>)}
               </select>
             </Field>
           )}
@@ -554,16 +554,16 @@ function PaymentModal({ row, companyParams, onClose, onSaved }) {
                 {invoice && !suppliers.some((x) => String(x.id) === String(invoice.supplier)) && (
                   <option value={invoice.supplier}>{invoice.supplier_label || invoice.supplier}</option>
                 )}
-                <option value="">—</option>
-                {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}
+                <option value="">â€”</option>
+                {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} Â· {s.name}</option>)}
               </select>
             </Field>
           )}
           {form.party_type === 'TRANSPORTER' && (
             <Field label="Transporter" required err={fieldErr.transporter} span>
               <select className="form-select" value={form.transporter} onChange={set('transporter')} required>
-                <option value="">—</option>
-                {transporters.map((t) => <option key={t.id} value={t.id}>{t.code} · {t.name}</option>)}
+                <option value="">â€”</option>
+                {transporters.map((t) => <option key={t.id} value={t.id}>{t.code} Â· {t.name}</option>)}
               </select>
             </Field>
           )}
@@ -584,8 +584,8 @@ function PaymentModal({ row, companyParams, onClose, onSaved }) {
           <Field label="Bank / cash account" required err={fieldErr.bank_account}>
               <>
                 <select className="form-select" value={form.bank_account} onChange={(e) => pickBank(e.target.value)} required>
-                  <option value="">—</option>
-                  {bankChoices.map((b) => <option key={b.id} value={b.id}>{b.name} · {b.currency}</option>)}
+                  <option value="">â€”</option>
+                  {bankChoices.map((b) => <option key={b.id} value={b.id}>{b.name} Â· {b.currency}</option>)}
                 </select>
                 {invoice && !loadingData && !bankChoices.length && (
                   <p className="text-muted-soft mt-2 mb-0">No {invoice.currency} account for this company. Add one under Bank.</p>

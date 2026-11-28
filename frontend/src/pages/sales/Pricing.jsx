@@ -11,8 +11,8 @@ import Field from '../../components/Field';
 import { SectionHeader, SectionBody, KV, EmptyState } from '../../components/PageSection';
 
 const METHODS = ['FIXED', 'MARKET', 'COST_PLUS'];
-const fmt = (n) => (n == null || n === '' ? '—' : Number(n).toFixed(6));
-const pct = (n) => (n != null ? Number(n).toFixed(3) : '—');
+const fmt = (n) => (n == null || n === '' ? 'â€”' : Number(n).toFixed(6));
+const pct = (n) => (n != null ? Number(n).toFixed(3) : 'â€”');
 
 export default function Pricing() {
   const [form, setForm] = useState({

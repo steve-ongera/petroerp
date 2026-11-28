@@ -37,13 +37,13 @@ const PILL = {
 const pill = (s) => `status-pill ${PILL[s] || 'status-pill--neutral'}`;
 
 function fmtMoney(n) {
-  if (n == null || n === '') return '—';
+  if (n == null || n === '') return 'â€”';
   const x = Number(n);
   if (Number.isNaN(x)) return String(n);
   return x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 function fmtDateTime(v) {
-  if (!v) return '—';
+  if (!v) return 'â€”';
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString();
 }
@@ -195,7 +195,7 @@ export default function Approvals() {
                         </td>
                         <td style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.summary}</td>
                         <td className="cell-num">{fmtMoney(r.amount)}</td>
-                        <td>{r.created_by_label || '—'}</td>
+                        <td>{r.created_by_label || 'â€”'}</td>
                         <td>{fmtDateTime(r.created_at)}</td>
                         <td><span className={pill(r.status)}>{r.status}</span></td>
                         <td onClick={(e) => e.stopPropagation()}>
@@ -219,7 +219,7 @@ export default function Approvals() {
         {count > PAGE_SIZE && (
           <div className="pagination pagination--bordered">
             <span className="pagination__info">
-              Page <strong>{page}</strong> of <strong>{pages}</strong> · {count} items
+              Page <strong>{page}</strong> of <strong>{pages}</strong> Â· {count} items
             </span>
             <div className="pagination__list">
               <button className="pagination__btn" disabled={page <= 1} onClick={() => setPage(page - 1)}>Prev</button>
@@ -281,9 +281,9 @@ function DecisionModal({ req, canDecide, isMine, onClose, onDecide }) {
       <div className="kv">
         <div className="kv__item"><div className="kv__label">Amount</div><div className="kv__value">{fmtMoney(req.amount)}</div></div>
         <div className="kv__item"><div className="kv__label">Status</div><div className="kv__value"><span className={pill(req.status)}>{req.status}</span></div></div>
-        <div className="kv__item"><div className="kv__label">Requested by</div><div className="kv__value">{req.created_by_label || '—'}</div></div>
+        <div className="kv__item"><div className="kv__label">Requested by</div><div className="kv__value">{req.created_by_label || 'â€”'}</div></div>
         <div className="kv__item"><div className="kv__label">Created</div><div className="kv__value">{fmtDateTime(req.created_at)}</div></div>
-        <div className="kv__item"><div className="kv__label">Decided by</div><div className="kv__value">{req.decided_by_label || '—'}</div></div>
+        <div className="kv__item"><div className="kv__label">Decided by</div><div className="kv__value">{req.decided_by_label || 'â€”'}</div></div>
         <div className="kv__item"><div className="kv__label">Decided at</div><div className="kv__value">{fmtDateTime(req.decided_at)}</div></div>
       </div>
 

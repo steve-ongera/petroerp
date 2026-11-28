@@ -23,7 +23,7 @@ const ACTIONS = [
 ];
 
 function fmtDateTime(v) {
-  if (!v) return '—';
+  if (!v) return 'â€”';
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString();
 }
@@ -212,13 +212,13 @@ export default function AuditLog() {
                   {rows.map((r) => (
                     <tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => setDetails(r)}>
                       <td>{fmtDateTime(r.created_at)}</td>
-                      <td>{r.user_label || r.user || '—'}</td>
+                      <td>{r.user_label || r.user || 'â€”'}</td>
                       <td><span className="badge badge-neutral">{r.action}</span></td>
                       <td className="cell-mono">{r.model_name}</td>
                       <td className="cell-name" style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {r.object_repr || `#${r.object_id}`}
                       </td>
-                      <td>{r.ip_address || '—'}</td>
+                      <td>{r.ip_address || 'â€”'}</td>
                       <td onClick={(e) => e.stopPropagation()}>
                         <div className="row-actions">
                           <button className="btn btn-icon" title="Details" aria-label="Details" onClick={() => setDetails(r)}>
@@ -237,7 +237,7 @@ export default function AuditLog() {
         {count > PAGE_SIZE && (
           <div className="pagination pagination--bordered">
             <span className="pagination__info">
-              Page <strong>{page}</strong> of <strong>{pages}</strong> · {count} entries
+              Page <strong>{page}</strong> of <strong>{pages}</strong> Â· {count} entries
             </span>
             <div className="pagination__list">
               <button className="pagination__btn" disabled={page <= 1} onClick={() => setPage(page - 1)}>Prev</button>
@@ -252,7 +252,7 @@ export default function AuditLog() {
         <Modal
           show
           onClose={() => setDetails(null)}
-          title={`${details.action} · ${details.model_name}`}
+          title={`${details.action} Â· ${details.model_name}`}
           subtitle={details.object_repr || `#${details.object_id}`}
           icon="bi-journal-check"
           size="lg"
@@ -261,10 +261,10 @@ export default function AuditLog() {
           <h6 className="modal-section-title"><i className="bi bi-info-circle" aria-hidden="true"></i>Entry</h6>
           <div className="kv">
             <div className="kv__item"><div className="kv__label">When</div><div className="kv__value">{fmtDateTime(details.created_at)}</div></div>
-            <div className="kv__item"><div className="kv__label">User</div><div className="kv__value">{details.user_label || details.user || '—'}</div></div>
+            <div className="kv__item"><div className="kv__label">User</div><div className="kv__value">{details.user_label || details.user || 'â€”'}</div></div>
             <div className="kv__item"><div className="kv__label">Model</div><div className="kv__value cell-mono">{details.model_name}</div></div>
             <div className="kv__item"><div className="kv__label">Object id</div><div className="kv__value cell-mono">{details.object_id}</div></div>
-            <div className="kv__item"><div className="kv__label">IP</div><div className="kv__value">{details.ip_address || '—'}</div></div>
+            <div className="kv__item"><div className="kv__label">IP</div><div className="kv__value">{details.ip_address || 'â€”'}</div></div>
             <div className="kv__item"><div className="kv__label">Hash</div><div className="kv__value cell-mono" style={{ wordBreak: 'break-all', fontSize: '0.75rem' }}>{details.hash}</div></div>
           </div>
           {details.changes && Object.keys(details.changes).length > 0 && (

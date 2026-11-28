@@ -61,7 +61,7 @@ export default function Accounts() {
           <div className="page-header__text">
             <h1 className="page-title">Chart of accounts</h1>
             <p className="page-subtitle">
-              {activeCompanyObj ? activeCompanyObj.name : 'All entities'} · {rows.length} account{rows.length !== 1 ? 's' : ''}
+              {activeCompanyObj ? activeCompanyObj.name : 'All entities'} Â· {rows.length} account{rows.length !== 1 ? 's' : ''}
             </p>
           </div>
         </div>
@@ -158,8 +158,8 @@ export default function Accounts() {
                       <td className="cell-mono text-brand fw-600">{a.code}</td>
                       <td className="cell-name">{a.name}</td>
                       <td><span className="badge badge-neutral">{a.account_type}</span></td>
-                      <td>{a.subtype || '—'}</td>
-                      <td className="cell-mono">{a.group_code || '—'}</td>
+                      <td>{a.subtype || 'â€”'}</td>
+                      <td className="cell-mono">{a.group_code || 'â€”'}</td>
                       <td>
                         <span className={`status-pill ${a.is_postable ? 'status-pill--success' : 'status-pill--neutral'}`}>
                           {a.is_postable ? 'YES' : 'NO'}
@@ -281,8 +281,8 @@ function AccountModal({ row, accounts, companyParams, onClose, onSaved }) {
           </Field>
           <Field label="Parent account">
             <select className="form-select" value={form.parent || ''} onChange={set('parent')}>
-              <option value="">— none —</option>
-              {parents.map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}
+              <option value="">ï¿½ none ï¿½</option>
+              {parents.map((a) => <option key={a.id} value={a.id}>{a.code} Â· {a.name}</option>)}
             </select>
           </Field>
         </div>

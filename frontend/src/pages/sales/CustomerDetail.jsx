@@ -21,7 +21,7 @@ const TABS = [
 ];
 
 const fmtMoney = (n, c = '') => {
-  if (n == null || n === '') return '—';
+  if (n == null || n === '') return 'â€”';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -73,7 +73,7 @@ export default function CustomerDetail() {
               <span className={`status-pill ${customerStatusPill(c.status)}`}>{c.status.replace('_', ' ')}</span>
             </h1>
             <p className="page-subtitle">
-              {c.code} · {c.country} · {c.credit_period_days} days · credit limit {fmtMoney(c.credit_limit, c.currency)}
+              {c.code} Â· {c.country} Â· {c.credit_period_days} days Â· credit limit {fmtMoney(c.credit_limit, c.currency)}
             </p>
           </div>
         </div>
@@ -134,12 +134,12 @@ function Overview({ c }) {
       <SectionHeader first icon="bi-info-circle" title="Customer Details" />
       <SectionBody>
         <KV items={[
-          ['Tax registration', c.tax_registration || '—'],
-          ['Contact', c.contact_person || '—'],
-          ['Phone', c.phone || '—'],
-          ['Email', c.email || '—'],
-          ['Currency', c.currency || '—'],
-          ['Payment terms', c.payment_terms || '—'],
+          ['Tax registration', c.tax_registration || 'â€”'],
+          ['Contact', c.contact_person || 'â€”'],
+          ['Phone', c.phone || 'â€”'],
+          ['Email', c.email || 'â€”'],
+          ['Currency', c.currency || 'â€”'],
+          ['Payment terms', c.payment_terms || 'â€”'],
         ]} />
         {c.address && (
           <p className="text-muted-soft" style={{ marginTop: '1rem', marginBottom: 0 }}>
@@ -171,7 +171,7 @@ function CreditTab({ id }) {
           <KV items={[
             ['Credit limit', fmtMoney(data.credit_limit)],
             ['Exposure', fmtMoney(data.exposure)],
-            ['Available', data.available != null ? fmtMoney(data.available) : '—'],
+            ['Available', data.available != null ? fmtMoney(data.available) : 'â€”'],
           ]} />
         </SectionBody>
       </section>
@@ -316,9 +316,9 @@ function ContactsTab({ customer, canEdit }) {
                   {rows.map((r) => (
                     <tr key={r.id}>
                       <td className="cell-name">{r.name}</td>
-                      <td>{r.position || '—'}</td>
-                      <td>{r.phone || '—'}</td>
-                      <td>{r.email || '—'}</td>
+                      <td>{r.position || 'â€”'}</td>
+                      <td>{r.phone || 'â€”'}</td>
+                      <td>{r.email || 'â€”'}</td>
                       <td>
                         {canEdit && (
                           <div className="row-actions">

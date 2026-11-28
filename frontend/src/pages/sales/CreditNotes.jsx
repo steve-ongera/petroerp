@@ -14,7 +14,7 @@ import TableSkeleton from '../../components/TableSkeleton';
 const STATUS = ['DRAFT', 'POSTED'];
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtMoney = (n, c = '') => {
-  if (n == null || n === '') return '—';
+  if (n == null || n === '') return 'â€”';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -171,10 +171,10 @@ export default function CreditNotes() {
                       <td className="cell-mono text-brand fw-600">{cn.reference}</td>
                       <td>{cn.note_date}</td>
                       <td className="cell-mono">{cn.invoice_label || cn.invoice}</td>
-                      <td>{cn.product_label || '—'}</td>
+                      <td>{cn.product_label || 'â€”'}</td>
                       <td className="cell-num">{Number(cn.quantity || 0).toLocaleString()}</td>
                       <td className="cell-num">{fmtMoney(cn.total, cn.currency)}</td>
-                      <td className="text-truncate" style={{ maxWidth: 240 }}>{cn.reason || '—'}</td>
+                      <td className="text-truncate" style={{ maxWidth: 240 }}>{cn.reason || 'â€”'}</td>
                       <td>
                         <span className={`status-pill ${cn.status === 'POSTED' ? 'status-pill--info' : 'status-pill--neutral'}`}>{cn.status}</span>
                       </td>
@@ -269,18 +269,18 @@ function CreditNoteModal({ row, companyParams, onClose, onSaved }) {
         <div className="form-grid">
           <Field label="Invoice" required err={fieldErr.invoice}>
             <select className="form-select" value={form.invoice} onChange={set('invoice')} required>
-              <option value="">—</option>
+              <option value="">â€”</option>
               {invoices.map((i) => (
                 <option key={i.id} value={i.id}>
-                  {i.reference} · {i.customer_label || i.customer} · {fmtMoney(i.total, i.currency)}
+                  {i.reference} Â· {i.customer_label || i.customer} Â· {fmtMoney(i.total, i.currency)}
                 </option>
               ))}
             </select>
           </Field>
           <Field label="Product">
             <select className="form-select" value={form.product} onChange={set('product')}>
-              <option value="">—</option>
-              {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
+              <option value="">â€”</option>
+              {products.map((p) => <option key={p.id} value={p.id}>{p.code} Â· {p.name}</option>)}
             </select>
           </Field>
           <Field label="Note date" required>
@@ -310,8 +310,8 @@ function CreditNoteModal({ row, companyParams, onClose, onSaved }) {
           </Field>
           <Field label="Restock tank">
             <select className="form-select" value={form.restock_tank} onChange={set('restock_tank')}>
-              <option value="">— do not restock —</option>
-              {tanks.map((t) => <option key={t.id} value={t.id}>{t.code} · {t.name}</option>)}
+              <option value="">ï¿½ do not restock ï¿½</option>
+              {tanks.map((t) => <option key={t.id} value={t.id}>{t.code} Â· {t.name}</option>)}
             </select>
           </Field>
         </div>

@@ -12,7 +12,7 @@ import { ServerPagination } from './Customers';
 
 const STATUSES = ['DRAFT', 'POSTED', 'PART_PAID', 'PAID', 'CANCELLED'];
 const fmtMoney = (n, c = '') => {
-  if (n == null || n === '') return '—';
+  if (n == null || n === '') return 'â€”';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -186,7 +186,7 @@ export default function SalesInvoices() {
                       </td>
                       <td className="cell-name">{i.customer_label || i.customer}</td>
                       <td>{i.invoice_date}</td>
-                      <td>{i.due_date || '—'}</td>
+                      <td>{i.due_date || 'â€”'}</td>
                       <td className="cell-num">{fmtMoney(i.total, i.currency)}</td>
                       <td className="cell-num">{fmtMoney(i.outstanding)}</td>
                       <td><span className={`status-pill ${invoiceStatusPill(i.status)}`}>{i.status.replace('_', ' ')}</span></td>

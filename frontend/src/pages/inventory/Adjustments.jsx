@@ -1,5 +1,5 @@
 /**
- * Stock adjustments (from tank reconciliation) — read-only list.
+ * Stock adjustments (from tank reconciliation) Â· read-only list.
  * Adjustments are created by /tank-reconciliations/:id/raise-adjustment/ and approved on the Approvals page.
  * - GET /stock-adjustments/     readOnly
  * - GET /stock-transfers/       readOnly (historical transfers)
@@ -11,7 +11,7 @@ import Pagination, { usePagination } from '../../components/Pagination';
 import TableSkeleton from '../../components/TableSkeleton';
 
 const fmtMoney = (n) => {
-  if (n == null || n === '') return '—';
+  if (n == null || n === '') return 'â€”';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
@@ -52,7 +52,7 @@ export default function Adjustments() {
           <div className="page-header__text">
             <h1 className="page-title">Adjustments &amp; transfers</h1>
             <p className="page-subtitle">
-              Stock adjustments and inter-tank transfers{activeCompanyObj ? ` · ${activeCompanyObj.name}` : ''}
+              Stock adjustments and inter-tank transfers{activeCompanyObj ? ` Â· ${activeCompanyObj.name}` : ''}
             </p>
           </div>
         </div>
@@ -125,7 +125,7 @@ export default function Adjustments() {
                       <td className="cell-num">{Number(a.quantity).toLocaleString(undefined, { minimumFractionDigits: 3 })}</td>
                       <td className="cell-num">{Number(a.unit_cost).toFixed(6)}</td>
                       <td className="cell-num">{fmtMoney(a.value)}</td>
-                      <td className="text-truncate" style={{ maxWidth: 220 }}>{a.reason || '—'}</td>
+                      <td className="text-truncate" style={{ maxWidth: 220 }}>{a.reason || 'â€”'}</td>
                       <td><span className={`status-pill ${adjPill(a.status)}`}>{a.status}</span></td>
                     </tr>
                   ))}
@@ -156,7 +156,7 @@ export default function Adjustments() {
                       <td className="cell-mono">{t.from_tank_label || t.from_tank}</td>
                       <td className="cell-mono">{t.to_tank_label || t.to_tank}</td>
                       <td className="cell-num">{Number(t.quantity).toLocaleString(undefined, { minimumFractionDigits: 3 })}</td>
-                      <td className="text-truncate" style={{ maxWidth: 240 }}>{t.notes || '—'}</td>
+                      <td className="text-truncate" style={{ maxWidth: 240 }}>{t.notes || 'â€”'}</td>
                       <td><span className="status-pill status-pill--success">{t.status}</span></td>
                     </tr>
                   ))}

@@ -174,7 +174,7 @@ export default function Suppliers() {
                       </td>
                       <td className="cell-name">{s.name}</td>
                       <td>{s.country}</td>
-                      <td className="cell-mono">{s.tax_pin || '—'}</td>
+                      <td className="cell-mono">{s.tax_pin || 'â€”'}</td>
                       <td className="cell-num">{Number(s.credit_limit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                       <td>{s.payment_terms_days} days</td>
                       <td><span className={`status-pill ${supplierStatusPill(s.status)}`}>{s.status}</span></td>
@@ -301,7 +301,7 @@ export function SupplierModal({ row = {}, onClose, onSaved }) {
           </Field>
           <Field label="Currency">
             <select className="form-select" value={form.currency} onChange={set('currency')}>
-              <option value="">—</option>
+              <option value="">â€”</option>
               {currencies.map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
             </select>
           </Field>

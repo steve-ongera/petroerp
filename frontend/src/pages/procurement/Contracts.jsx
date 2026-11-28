@@ -4,7 +4,7 @@
  * - Allowed statuses: DRAFT, ACTIVE, EXPIRED, CANCELLED
  *
  * NOTE: this is the procurement "Contracts.jsx" (the sales one is for customers).
- * Saved here as SupplierContracts.jsx to avoid a name clash — rename to match your folder.
+ * Saved here as SupplierContracts.jsx to avoid a name clash Â· rename to match your folder.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth, useApp } from '../../context/AppContext';
@@ -184,11 +184,11 @@ export default function Contracts() {
                     <tr key={c.id}>
                       <td className="cell-mono text-brand fw-600">{c.reference}</td>
                       <td className="cell-name">{c.supplier_label || c.supplier}</td>
-                      <td>{c.product_label || '—'}</td>
+                      <td>{c.product_label || 'â€”'}</td>
                       <td>{c.start_date}</td>
-                      <td>{c.end_date || '—'}</td>
+                      <td>{c.end_date || 'â€”'}</td>
                       <td className="cell-num">{Number(c.max_quantity || 0).toLocaleString()}</td>
-                      <td>{c.price_basis || '—'}</td>
+                      <td>{c.price_basis || 'â€”'}</td>
                       <td><span className={`status-pill ${statusPill(c.status)}`}>{c.status}</span></td>
                       <td>
                         {can('suppliers.edit') && (
@@ -280,14 +280,14 @@ function ContractModal({ row, suppliers, products, companyParams, onClose, onSav
         <div className="form-grid">
           <Field label="Supplier" required err={fieldErr.supplier}>
             <select className="form-select" value={form.supplier} onChange={set('supplier')} required>
-              <option value="">—</option>
-              {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}
+              <option value="">â€”</option>
+              {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} Â· {s.name}</option>)}
             </select>
           </Field>
           <Field label="Product">
             <select className="form-select" value={form.product} onChange={set('product')}>
-              <option value="">—</option>
-              {products.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
+              <option value="">â€”</option>
+              {products.map((p) => <option key={p.id} value={p.id}>{p.code} Â· {p.name}</option>)}
             </select>
           </Field>
           <Field label="Start date" required err={fieldErr.start_date}>

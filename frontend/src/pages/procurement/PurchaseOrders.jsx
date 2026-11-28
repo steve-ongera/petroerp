@@ -16,7 +16,7 @@ import TableSkeleton from '../../components/TableSkeleton';
 
 const STATUSES = ['DRAFT', 'AWAITING_APPROVAL', 'APPROVED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'INVOICED', 'CLOSED', 'CANCELLED'];
 const fmtMoney = (n, c = '') => {
-  if (n == null || n === '') return '—';
+  if (n == null || n === '') return 'â€”';
   const x = Number(n);
   return Number.isNaN(x) ? String(n) : `${c ? `${c} ` : ''}${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -184,10 +184,10 @@ export default function PurchaseOrders() {
                       <td className="cell-mono fw-600">
                         <Link to={`/procurement/purchase-orders/${po.id}`} className="text-brand">{po.reference}</Link>
                       </td>
-                      <td className="cell-mono">{po.requisition_label || '—'}</td>
+                      <td className="cell-mono">{po.requisition_label || 'â€”'}</td>
                       <td className="cell-name">{po.supplier_label || po.supplier}</td>
                       <td>{po.order_date}</td>
-                      <td>{po.expected_loading_date || '—'}</td>
+                      <td>{po.expected_loading_date || 'â€”'}</td>
                       <td className="cell-num">{fmtMoney(po.total, po.currency)}</td>
                       <td><span className={`status-pill ${poStatusPill(po.status)}`}>{po.status.replace(/_/g, ' ')}</span></td>
                       <td>

@@ -273,8 +273,8 @@ function CompanyModal({ company, currencies, onClose, onSaved }) {
           </Field>
           <Field label="Functional currency" required err={fieldErr.functional_currency}>
             <select className="form-select" value={form.functional_currency || ''} onChange={set('functional_currency')} required>
-              <option value="">—</option>
-              {currencies.map((c) => <option key={c.code} value={c.code}>{c.code} · {c.name}</option>)}
+              <option value="">â€”</option>
+              {currencies.map((c) => <option key={c.code} value={c.code}>{c.code} Â· {c.name}</option>)}
             </select>
           </Field>
           <Field label="Tax PIN" err={fieldErr.tax_pin}>
