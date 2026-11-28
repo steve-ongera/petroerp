@@ -59,6 +59,9 @@ export const EMPLOYEES_EDIT = allow(MD, KFM, DFM);   // add / edit / delete empl
 export const EMPLOYEES_LINK = allow(MD);             // link / unlink a user account
 export const EMPLOYEES_PAYSLIPS = PAYROLL;           // see salary, bank details and payslips
 
+// Payroll: who may create, review-and-process and delete draft runs (matches the server's finance posting roles).
+export const PAYROLL_PROCESS = allow(KFM, DFM, ACC);
+
 export const ICON_KEYS = {
   dashboard: 'dashboard',
   admin: 'settings',

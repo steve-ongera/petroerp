@@ -505,12 +505,17 @@ const employees = {
 
 const leaveRequests = withStatus('leave-requests', crud('leave-requests'));
 const payrollConfigs = crud('payroll-configs');
-const payrollRuns = {
-  ...crud('payroll-runs'),
-  /** body: { overtime: { [employeeId]: amount } } */
-  process: (id, overtime = {}) => post(`/payroll-runs/${id}/process/`, { overtime }),
-  payslips: (id) => get(`/payroll-runs/${id}/payslips/`),
-};
+ const payrollRuns = {
+   ...crud('payroll-runs'),
+   /** Live calculation for every eligible employee. Nothing is saved. overtime: { [employeeId]: amount } */
+  preview: (id, overtime = {}) => post(`/payroll-runs/${id}/preview/`, { overtime }),
+   /** Download the preview as an Excel file. */
+   exportPreview: async (id, overtime = {}, fmt = 'xlsx') =>
+     saveBlob(await request('POST', `/payroll-runs/${id}/preview/`, { body: { overtime }, params: { export: fmt }, blob: true })),
+   process: (id, overtime = {}) => post(`/payroll-runs/${id}/process/`, { overtime }),
+   payslips: (id) => get(`/payroll-runs/${id}/payslips/`),
+   exportPayslips: (id, fmt = 'xlsx') => download(`/payroll-runs/${id}/payslips/`, { export: fmt }),
+ };
 
 // ------------------------------------------------------------------ group accounting
 const intercompany = {
