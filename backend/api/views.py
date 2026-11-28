@@ -1006,6 +1006,24 @@ reg('export-declarations', m.ExportDeclaration, filters_=('shipment',), simple_s
 reg('compliance-checks', m.ShipmentComplianceCheck, filters_=('shipment',))
 
 
+@route('shipment-positions')
+class ShipmentPositionViewSet(make_viewset(m.ShipmentPosition, filters_=('shipment',), date_field='recorded_at')):
+    def perform_create(self, serializer):
+        v = serializer.validated_data
+        sh, co = v.get('shipment'), v.get('company')
+        if sh and co and sh.company_id != co.id:
+            raise DRFValidationError({'shipment': 'This shipment belongs to another legal entity.'})
+        if sh and sh.status in ('DRAFT', 'CLOSED', 'CANCELLED'):
+            raise DRFValidationError({'detail': f'Positions cannot be recorded on a {sh.status.lower()} shipment.'})
+        lat, lng = v.get('latitude'), v.get('longitude')
+        if (lat is None) != (lng is None):
+            raise DRFValidationError({'detail': 'Give both latitude and longitude, or neither.'})
+        if lat is not None and not (-90 <= lat <= 90 and -180 <= lng <= 180):
+            raise DRFValidationError({'detail': 'Coordinates are out of range.'})
+        if lat is None and not v.get('location'):
+            raise DRFValidationError({'detail': 'Enter where the truck is, or give its coordinates.'})
+        super().perform_create(serializer)
+
 @route('cost-sheets')
 class CostSheetViewSet(make_viewset(m.ShipmentCostSheet, readonly=True, filters_=('shipment', 'is_final'))):
     pass
@@ -1249,26 +1267,63 @@ class FixedAssetViewSet(make_viewset(m.FixedAsset, filters_=('category',), date_
 
 
 # ====================================================================== payroll / HR
-reg('employees', m.Employee, search=('national_id',))
+
 reg('leave-requests', m.LeaveRequest, simple_status=('APPROVED', 'REJECTED'), editable=('DRAFT',), filters_=('employee',))
 reg('payroll-configs', m.PayrollConfig)
 
 
 @route('payroll-runs')
 class PayrollRunViewSet(make_viewset(m.PayrollRun, date_field='period_end')):
+    """
+    CRUD (DRAFT only can be edited / deleted) plus:
+      GET|POST /payroll-runs/:id/preview/   live calculation for every eligible employee (nothing is saved)
+                                            POST {overtime: {employeeId: amount}}; add ?export=xlsx|pdf for Excel
+      POST     /payroll-runs/:id/process/   post the run (same maths as the preview)
+      GET      /payroll-runs/:id/payslips/  payslips of a posted run; add ?export=xlsx|pdf
+    """
+
+    @action(detail=True, methods=['get', 'post'])
+    def preview(self, request, pk=None):
+        run = self.get_object()
+        if run.status != 'DRAFT':
+            raise DRFValidationError({'detail': 'Only draft payroll runs can be previewed. Open the payslips instead.'})
+        overtime = {}
+        if request.method == 'POST':
+            d = sz.PayrollIn(data=request.data)
+            d.is_valid(raise_exception=True)
+            overtime = {str(k): v for k, v in d.validated_data.get('overtime', {}).items()}
+        payload = svc.payroll_preview(run, overtime)
+        if request.query_params.get('export') in ('xlsx', 'pdf'):
+            return table_response(request, svc.payroll_export_table(payload))
+        return Response(payload)
+
     @action(detail=True, methods=['post'])
     def process(self, request, pk=None):
         d = sz.PayrollIn(data=request.data)
         d.is_valid(raise_exception=True)
-        run = svc.run_payroll(self.get_object(), request.user, {str(k): v for k, v in d.validated_data.get('overtime', {}).items()})
+        run = svc.run_payroll(self.get_object(), request.user,
+                              {str(k): v for k, v in d.validated_data.get('overtime', {}).items()})
         return Response(sz.serializer_for(m.PayrollRun)(run).data)
 
     @action(detail=True, methods=['get'])
     def payslips(self, request, pk=None):
-        qs = m.Payslip.objects.filter(run=self.get_object()).select_related('employee')
-        return Response([{'employee': str(p.employee), 'basic': p.basic, 'allowances': p.allowances, 'overtime': p.overtime, 'gross': p.gross,
-                          'deductions': p.deductions, 'total_deductions': p.total_deductions, 'net_pay': p.net_pay} for p in qs])
-
+        run = self.get_object()
+        qs = m.Payslip.objects.filter(run=run).select_related('employee').order_by('employee__full_name')
+        data = [{'id': p.id, 'employee_id': p.employee_id, 'code': p.employee.code, 'employee': str(p.employee),
+                 'basic': p.basic, 'allowances': p.allowances, 'overtime': p.overtime, 'gross': p.gross,
+                 'deductions': p.deductions, 'total_deductions': p.total_deductions,
+                 'employer_contributions': p.employer_contributions, 'total_employer': p.total_employer,
+                 'net_pay': p.net_pay} for p in qs]
+        if request.query_params.get('export') in ('xlsx', 'pdf'):
+            dk = sorted({k for p in data for k in p['deductions']})
+            ek = sorted({k for p in data for k in p['employer_contributions']})
+            columns = (['Code', 'Employee', 'Basic', 'Allowances', 'Overtime', 'Gross'] + dk
+                       + ['Total deductions', 'Net pay'] + [f'{k} (employer)' for k in ek] + ['Total employer'])
+            rows = [[p['code'], p['employee'], p['basic'], p['allowances'], p['overtime'], p['gross'],
+                     *[m.dec(p['deductions'].get(k, 0)) for k in dk], p['total_deductions'], p['net_pay'],
+                     *[m.dec(p['employer_contributions'].get(k, 0)) for k in ek], p['total_employer']] for p in data]
+            return table_response(request, {'title': f'Payslips {run.reference}', 'columns': columns, 'rows': rows})
+        return Response(data)
 
 # ====================================================================== group accounting
 @route('intercompany')
@@ -1459,3 +1514,81 @@ class AIView(APIView):
         if op == 'supplier-prices':
             return Response(svc.supplier_price_comparison(ids, request.query_params.get('product')))
         raise DRFValidationError({'detail': 'Unknown AI operation.'})
+
+
+
+
+@route('employees')
+class EmployeeViewSet(make_viewset(m.Employee, search=('national_id', 'job_title'), filters_=('is_driver',))):
+    """
+    Employees CRUD (from make_viewset) plus:
+      GET  /employees/:id/profile/          employee, linked user, payslip stats, payslips, leave
+      GET  /employees/:id/available-users/  users that can still be linked to this employee
+      POST /employees/:id/link-user/        {user: id} links, {user: null} unlinks
+    """
+
+    @action(detail=True, methods=['get'])
+    def profile(self, request, pk=None):
+        e = self.get_object()
+        slips = list(m.Payslip.objects.filter(employee=e, run__status='POSTED')
+                     .select_related('run').order_by('-run__period_end', '-id')[:60])
+        year = svc.today().year
+        this_year = [s for s in slips if s.run.period_end.year == year]
+        u = e.user
+        return Response({
+            'employee': sz.serializer_for(m.Employee)(e, context=self.get_serializer_context()).data,
+            'user': {'id': u.id, 'username': u.username, 'email': u.email,
+                     'name': u.get_full_name() or u.username,
+                     'role_name': u.role.name if u.role_id else None,
+                     'is_active': u.is_active} if u else None,
+            'stats': {
+                'payslips': len(slips),
+                'ytd_gross': sum((s.gross for s in this_year), D0),
+                'ytd_net': sum((s.net_pay for s in this_year), D0),
+                'last_net': slips[0].net_pay if slips else None,
+                'last_period': slips[0].run.period_end if slips else None,
+            },
+            'payslips': [{
+                'id': s.id, 'run_id': s.run_id, 'run_reference': s.run.reference,
+                'period_start': s.run.period_start, 'period_end': s.run.period_end,
+                'basic': s.basic, 'allowances': s.allowances, 'overtime': s.overtime, 'gross': s.gross,
+                'deductions': s.deductions, 'total_deductions': s.total_deductions,
+                'employer_contributions': s.employer_contributions, 'total_employer': s.total_employer,
+                'net_pay': s.net_pay} for s in slips],
+            'leaves': [{
+                'id': l.id, 'reference': l.reference, 'leave_type': l.leave_type, 'start_date': l.start_date,
+                'end_date': l.end_date, 'days': l.days, 'status': l.status}
+                for l in m.LeaveRequest.objects.filter(employee=e).order_by('-start_date')[:100]],
+        })
+
+    @action(detail=True, methods=['get'], url_path='available-users')
+    def available_users(self, request, pk=None):
+        e = self.get_object()
+        taken = m.Employee.objects.exclude(user__isnull=True).exclude(pk=e.pk).values_list('user_id', flat=True)
+        qs = (m.User.objects.filter(is_active=True).exclude(pk__in=taken)
+              .filter(Q(companies=e.company_id) | Q(is_superuser=True) | Q(role__code='GROUP_ADMIN'))
+              .select_related('role').distinct().order_by('username'))
+        return Response([{'id': u.id, 'username': u.username, 'name': u.get_full_name() or u.username,
+                          'email': u.email, 'role_name': u.role.name if u.role_id else None} for u in qs])
+
+    @action(detail=True, methods=['post'], url_path='link-user')
+    def link_user(self, request, pk=None):
+        e = self.get_object()
+        uid = request.data.get('user')
+        if uid in (None, ''):
+            e.user = None
+            e.save(update_fields=['user', 'updated_at'])
+            svc.audit(request.user, 'EMPLOYEE_UNLINK_USER', e)
+            return Response({'user': None})
+        u = m.User.objects.filter(pk=uid, is_active=True).first()
+        if not u:
+            raise DRFValidationError({'detail': 'User not found or inactive.'})
+        if not u.is_group_admin and e.company_id not in u.allowed_company_ids():
+            raise DRFValidationError({'detail': f'{u.username} does not have access to {e.company.name}.'})
+        other = m.Employee.objects.filter(user=u).exclude(pk=e.pk).first()
+        if other:
+            raise DRFValidationError({'detail': f'{u.username} is already linked to {other.full_name}.'})
+        e.user = u
+        e.save(update_fields=['user', 'updated_at'])
+        svc.audit(request.user, 'EMPLOYEE_LINK_USER', e, {'user': u.username})
+        return Response({'user': u.id})

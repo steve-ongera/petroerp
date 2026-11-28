@@ -117,6 +117,10 @@ IntercompanySerializer = make_serializer(m.IntercompanyTransaction, computed=('o
 
 
 
+EmployeeSerializer = make_serializer(m.Employee, read_only=('user',))
+
+
+
 class JournalLineSerializer(BaseSerializer):
     class Meta:
         model = m.JournalLine
@@ -280,6 +284,7 @@ _SPECIAL = {
     m.ShipmentCostSheet: ShipmentCostSheetSerializer, m.ApprovalRequest: ApprovalRequestSerializer,
     m.AuditLog: AuditLogSerializer, m.Notification: NotificationSerializer,
     m.TripAdvance: TripAdvanceSerializer,
+    m.Employee: EmployeeSerializer,
 }
 
 

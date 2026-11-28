@@ -1681,6 +1681,8 @@ class Employee(Coded):
     bank_account = Char(60)
     tax_number = Char(40)
     is_driver = Flag(False)
+    user = models.OneToOneField('User', null=True, blank=True, on_delete=models.SET_NULL,
+                                related_name='employee')          # NEW: login account of this employee
     status = Choice('ACTIVE SUSPENDED TERMINATED')
 
 

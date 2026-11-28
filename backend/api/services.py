@@ -1827,49 +1827,6 @@ def _bracket_tax(amount, brackets):
     return tax
 
 
-@transaction.atomic
-def run_payroll(run, user, overtime=None):
-    if run.status != 'DRAFT':
-        err('Payroll run already posted.')
-    co, overtime = run.company, overtime or {}
-    cfg = list(PayrollConfig.objects.filter(company=co, is_active=True, effective_from__lte=run.period_end)
-               .filter(Q(effective_to__isnull=True) | Q(effective_to__gte=run.period_end)))
-    emps = Employee.objects.filter(company=co, status='ACTIVE')
-    if not emps:
-        err('No active employees.')
-    tg = td = tn = te = D0
-    liab = {}
-    run.payslips.all().delete()
-    for e in emps:
-        allow = sum((dec(a.get('amount')) for a in e.allowances), D0)
-        ot = dec(overtime.get(str(e.id), 0))
-        gross = e.basic_salary + allow + ot
-        ded, emp = {}, {}
-        for c in cfg:
-            base = gross if c.base == 'GROSS' else e.basic_salary
-            v = (base * c.value / 100 if c.calc_type == 'PERCENT' else c.value if c.calc_type == 'FIXED' else _bracket_tax(base, c.brackets))
-            v = q2(min(v, c.cap) if c.cap else v)
-            (ded if c.kind == 'DEDUCTION' else emp)[c.code] = str(v)
-            if c.liability_account_id:
-                liab[c.liability_account_id] = liab.get(c.liability_account_id, D0) + v
-        tded, temp = sum((dec(x) for x in ded.values()), D0), sum((dec(x) for x in emp.values()), D0)
-        Payslip.objects.create(run=run, employee=e, basic=e.basic_salary, allowances=allow, overtime=ot, gross=gross,
-                               deductions=ded, total_deductions=tded, employer_contributions=emp, total_employer=temp,
-                               net_pay=gross - tded)
-        tg, td, tn, te = tg + gross, td + tded, tn + gross - tded, te + temp
-    stat_ded = sum((dec(v) for s in run.payslips.all() for v in s.deductions.values()), D0)
-    lines = [{'account': acct(co, 'SALARIES_EXP'), 'debit': tg + te},
-             {'account': acct(co, 'PAYROLL_PAYABLE'), 'credit': tn}]
-    stat_total = stat_ded + te
-    for acc_id, v in liab.items():
-        lines.append({'account': Account.objects.get(pk=acc_id), 'credit': v})
-    unmapped = stat_total - sum(liab.values(), D0)
-    if unmapped:
-        lines.append({'account': acct(co, 'STATUTORY_PAYABLE'), 'credit': unmapped})
-    run.journal = post_journal(co, run.period_end, f'Payroll {run.reference}', lines, source=run, user=user)
-    run.total_gross, run.total_deductions, run.total_net, run.total_employer_cost, run.status = tg, td, tn, te, 'POSTED'
-    run.save()
-    return run
 
 
 # =========================================================== FX revaluation (unrealized)
@@ -2776,3 +2733,155 @@ def seed_roles():
     """Creates the Role rows only. What each role can open is defined in src/navigation.js and the role sets above."""
     for code, name in ROLE_NAMES.items():
         Role.objects.get_or_create(code=code, defaults={'name': name})
+
+
+
+def payroll_employees(run):
+    """
+    Live list of who is paid in this run. Read at preview/process time, so an employee entered after the
+    draft was created is picked up automatically (nothing to "sync").
+    Returns (included, skipped) where skipped = [(employee, reason)] for ACTIVE employees that cannot be paid.
+    """
+    co = run.company
+    included, skipped = [], []
+    qs = Employee.objects.filter(company=co, status='ACTIVE').select_related('department', 'currency') \
+        .order_by('full_name')
+    for e in qs:
+        if e.hire_date and e.hire_date > run.period_end:
+            skipped.append((e, f'Hired on {e.hire_date}, after the period end'))
+        elif e.basic_salary <= 0:
+            skipped.append((e, 'No basic salary set'))
+        elif e.currency_id != co.functional_currency_id:
+            skipped.append((e, f'Salary currency {e.currency_id} differs from the company currency '
+                               f'{co.functional_currency_id}'))
+        else:
+            included.append(e)
+    return included, skipped
+
+
+def calc_payroll(run, overtime=None):
+    """Pure calculation (writes nothing). Used by the preview and by run_payroll so both always agree."""
+    co, overtime = run.company, overtime or {}
+    cfg = list(PayrollConfig.objects.filter(company=co, is_active=True, effective_from__lte=run.period_end)
+               .filter(Q(effective_to__isnull=True) | Q(effective_to__gte=run.period_end)).order_by('kind', 'code'))
+    included, skipped = payroll_employees(run)
+    lines, liab = [], {}
+    for e in included:
+        allow = sum((dec(a.get('amount')) for a in e.allowances), D0)
+        ot = dec(overtime.get(str(e.id), 0))
+        gross = e.basic_salary + allow + ot
+        ded, emp, warnings = {}, {}, []
+        for c in cfg:
+            base = gross if c.base == 'GROSS' else e.basic_salary
+            v = (base * c.value / 100 if c.calc_type == 'PERCENT'
+                 else c.value if c.calc_type == 'FIXED' else _bracket_tax(base, c.brackets))
+            v = q2(min(v, c.cap) if c.cap else v)
+            (ded if c.kind == 'DEDUCTION' else emp)[c.code] = v
+            if c.liability_account_id:
+                liab[c.liability_account_id] = liab.get(c.liability_account_id, D0) + v
+        total_ded, total_emp = sum(ded.values(), D0), sum(emp.values(), D0)
+        net = gross - total_ded
+        if net < 0:
+            warnings.append('Deductions are more than gross pay')
+        lines.append({'employee': e, 'basic': e.basic_salary, 'allowances': allow, 'overtime': ot, 'gross': gross,
+                      'deductions': ded, 'total_deductions': total_ded, 'net_pay': net,
+                      'employer': emp, 'total_employer': total_emp, 'warnings': warnings,
+                      'is_new': bool(e.created_at and run.created_at and e.created_at > run.created_at)})
+    return {'config': cfg, 'lines': lines, 'skipped': skipped, 'liab': liab}
+
+
+def payroll_preview(run, overtime=None):
+    """JSON for the 'review before processing' popup (what each employee will receive after every deduction)."""
+    calc = calc_payroll(run, overtime)
+    cfg = calc['config']
+    ded_cfg = [c for c in cfg if c.kind == 'DEDUCTION']
+    emp_cfg = [c for c in cfg if c.kind != 'DEDUCTION']
+    rows = []
+    tot = {k: D0 for k in ('basic', 'allowances', 'overtime', 'gross', 'total_deductions', 'net_pay', 'total_employer')}
+    tot_ded, tot_emp = defaultdict(lambda: D0), defaultdict(lambda: D0)
+    for l in calc['lines']:
+        e = l['employee']
+        rows.append({'employee_id': e.id, 'code': e.code, 'name': e.full_name, 'job_title': e.job_title,
+                     'department': e.department.name if e.department_id else '', 'is_new': l['is_new'],
+                     'basic': l['basic'], 'allowances': l['allowances'], 'overtime': l['overtime'], 'gross': l['gross'],
+                     'deductions': l['deductions'], 'total_deductions': l['total_deductions'], 'net_pay': l['net_pay'],
+                     'employer': l['employer'], 'total_employer': l['total_employer'], 'warnings': l['warnings']})
+        for k in tot:
+            tot[k] += l[k]
+        for k, v in l['deductions'].items():
+            tot_ded[k] += v
+        for k, v in l['employer'].items():
+            tot_emp[k] += v
+    warnings = []
+    if not cfg:
+        warnings.append('No active payroll configuration (PAYE, SHA, Housing levy, NSSF ...) covers this period, '
+                        'so no deductions are applied. Add them under Payroll configs.')
+    if not rows:
+        warnings.append('No employee can be paid in this run. See the skipped list.')
+    return {
+        'run': {'id': run.id, 'reference': run.reference, 'period_start': run.period_start,
+                'period_end': run.period_end, 'status': run.status, 'currency': run.company.functional_currency_id},
+        'columns': {'deductions': [{'code': c.code, 'name': c.name} for c in ded_cfg],
+                    'employer': [{'code': c.code, 'name': c.name} for c in emp_cfg]},
+        'rows': rows,
+        'skipped': [{'employee_id': e.id, 'code': e.code, 'name': e.full_name, 'reason': why} for e, why in calc['skipped']],
+        'totals': {**tot, 'employees': len(rows), 'deductions': dict(tot_ded), 'employer': dict(tot_emp)},
+        'warnings': warnings,
+    }
+
+
+def payroll_export_table(p):
+    """Flat table (for Excel / PDF) from a payroll_preview payload."""
+    ded, emp = p['columns']['deductions'], p['columns']['employer']
+    columns = (['Code', 'Employee', 'Job title', 'Basic', 'Allowances', 'Overtime', 'Gross']
+               + [c['name'] for c in ded] + ['Total deductions', 'Net pay']
+               + [f"{c['name']} (employer)" for c in emp] + ['Total employer contributions'])
+    rows = [[r['code'], r['name'], r['job_title'], r['basic'], r['allowances'], r['overtime'], r['gross'],
+             *[r['deductions'].get(c['code'], D0) for c in ded], r['total_deductions'], r['net_pay'],
+             *[r['employer'].get(c['code'], D0) for c in emp], r['total_employer']] for r in p['rows']]
+    t = p['totals']
+    rows.append(['', 'TOTAL', '', t['basic'], t['allowances'], t['overtime'], t['gross'],
+                 *[t['deductions'].get(c['code'], D0) for c in ded], t['total_deductions'], t['net_pay'],
+                 *[t['employer'].get(c['code'], D0) for c in emp], t['total_employer']])
+    r = p['run']
+    return {'title': f"Payroll {r['reference']} {r['period_start']} to {r['period_end']} ({r['currency']})",
+            'columns': columns, 'rows': rows}
+
+
+@transaction.atomic
+def run_payroll(run, user, overtime=None):
+    """Post the payroll. Uses calc_payroll, so the figures are exactly what the preview showed."""
+    if run.status != 'DRAFT':
+        err('Payroll run already posted.')
+    co = run.company
+    calc = calc_payroll(run, overtime)
+    lines = calc['lines']
+    if not lines:
+        err('No employee can be paid in this run. Check employee status, basic salary, hire date and currency.')
+    negative = [l['employee'].full_name for l in lines if l['net_pay'] < 0]
+    if negative:
+        err('Deductions are more than gross pay for: ' + ', '.join(negative) + '.')
+    run.payslips.all().delete()
+    tg = td = tn = te = D0
+    for l in lines:
+        Payslip.objects.create(
+            run=run, employee=l['employee'], basic=l['basic'], allowances=l['allowances'], overtime=l['overtime'],
+            gross=l['gross'], deductions={k: str(v) for k, v in l['deductions'].items()},
+            total_deductions=l['total_deductions'],
+            employer_contributions={k: str(v) for k, v in l['employer'].items()},
+            total_employer=l['total_employer'], net_pay=l['net_pay'])
+        tg, td, tn, te = tg + l['gross'], td + l['total_deductions'], tn + l['net_pay'], te + l['total_employer']
+    jl = [{'account': acct(co, 'SALARIES_EXP'), 'debit': tg + te},
+          {'account': acct(co, 'PAYROLL_PAYABLE'), 'credit': tn}]
+    liab = calc['liab']
+    for acc_id, v in liab.items():
+        jl.append({'account': Account.objects.get(pk=acc_id), 'credit': v})
+    unmapped = (td + te) - sum(liab.values(), D0)
+    if unmapped:
+        jl.append({'account': acct(co, 'STATUTORY_PAYABLE'), 'credit': unmapped})
+    run.journal = post_journal(co, run.period_end, f'Payroll {run.reference}', jl, source=run, user=user)
+    run.total_gross, run.total_deductions, run.total_net, run.total_employer_cost, run.status = tg, td, tn, te, 'POSTED'
+    run.save()
+    audit(user, 'RUN_PAYROLL', run, {'employees': len(lines), 'net': tn})
+    return run
+
